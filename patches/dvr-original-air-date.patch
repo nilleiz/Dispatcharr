@@ -1,7 +1,19 @@
 diff --git a/apps/channels/tasks.py b/apps/channels/tasks.py
 --- a/apps/channels/tasks.py
 +++ b/apps/channels/tasks.py
-@@ -982,12 +982,51 @@ def _safe_name(s):
+@@ -718,6 +718,11 @@ def _episode_key(p: "ProgramData"):
+                             "title": prog.title,
+                             "sub_title": prog.sub_title,
+                             "description": prog.description,
++                            "original_air_date": (
++                                _original_air_date_from_custom_properties(
++                                    prog.custom_properties
++                                )
++                            ),
+                             "start_time": prog.start_time.isoformat(),
+                             "end_time": prog.end_time.isoformat(),
+                         }
+@@ -982,17 +987,94 @@ def _safe_name(s):
          return s or ""
  
  
@@ -43,6 +55,18 @@ diff --git a/apps/channels/tasks.py b/apps/channels/tasks.py
 +    return safe_value.strip(" .")
 +
 +
++def _original_air_date_from_custom_properties(custom_properties):
++    """Read and normalize the canonical EPG original-air value."""
++    if not isinstance(custom_properties, dict):
++        return ""
++    previously_shown = (
++        custom_properties.get('previously_shown_details') or {}
++    )
++    if not isinstance(previously_shown, dict):
++        return ""
++    return _normalize_original_air_date(previously_shown.get('start'))
++
++
  def _parse_epg_tv_movie_info(program):
 -    """Return tuple (is_movie, season, episode, year, sub_title) from EPG ProgramData if available."""
 +    """Return TV/movie metadata stored with an EPG ProgramData entry."""
@@ -50,19 +74,51 @@ diff --git a/apps/channels/tasks.py b/apps/channels/tasks.py
      season = None
      episode = None
      year = None
-+    original_air_date = ""
++    original_air_date = (
++        _normalize_original_air_date(program.get('original_air_date'))
++        if isinstance(program, dict)
++        else ""
++    )
      sub_title = program.get('sub_title') if isinstance(program, dict) else None
      try:
          from apps.epg.models import ProgramData
-@@ -1010,9 +1049,14 @@ def _parse_epg_tv_movie_info(program):
++        from django.utils.dateparse import parse_datetime
++
+         prog_id = program.get('id') if isinstance(program, dict) else None
+-        epg_program = ProgramData.objects.filter(id=prog_id).only('custom_properties').first() if prog_id else None
++        epg_program = (
++            ProgramData.objects.filter(id=prog_id)
++            .only('custom_properties')
++            .first()
++            if prog_id
++            else None
++        )
++        if not epg_program and isinstance(program, dict):
++            tvg_id = program.get('tvg_id')
++            program_start = parse_datetime(str(program.get('start_time') or ''))
++            program_end = parse_datetime(str(program.get('end_time') or ''))
++            if tvg_id and program_start and program_end:
++                epg_program = (
++                    ProgramData.objects.filter(
++                        tvg_id=tvg_id,
++                        start_time=program_start,
++                        end_time=program_end,
++                    )
++                    .only('custom_properties')
++                    .first()
++                )
+         if epg_program and epg_program.custom_properties:
+             cp = epg_program.custom_properties
+             # Determine categories
+@@ -1010,9 +1092,14 @@ def _parse_epg_tv_movie_info(program):
              d = cp.get('date')
              if d:
                  year = str(d)[:4]
-+            previously_shown = cp.get('previously_shown_details') or {}
-+            if isinstance(previously_shown, dict):
-+                original_air_date = _normalize_original_air_date(
-+                    previously_shown.get('start')
-+                )
++            epg_original_air_date = (
++                _original_air_date_from_custom_properties(cp)
++            )
++            if epg_original_air_date:
++                original_air_date = epg_original_air_date
      except Exception:
          pass
 -    return is_movie, season, episode, year, sub_title
@@ -70,7 +126,7 @@ diff --git a/apps/channels/tasks.py b/apps/channels/tasks.py
  
  
  def _build_output_paths(channel, program, start_time, end_time, recording_id):
-@@ -1028,7 +1072,14 @@ def _build_output_paths(channel, program, start_time, end_time, recording_id):
+@@ -1028,7 +1115,14 @@ def _build_output_paths(channel, program, start_time, end_time, recording_id):
      # Root for DVR recordings: fixed to /data/recordings inside the container
      library_root = '/data/recordings'
  
@@ -86,7 +142,7 @@ diff --git a/apps/channels/tasks.py b/apps/channels/tasks.py
      show = _safe_name(program.get('title') if isinstance(program, dict) else channel.name)
      title = _safe_name(program.get('title') if isinstance(program, dict) else channel.name)
      sub_title = _safe_name(sub_title)
-@@ -1055,7 +1106,11 @@ def _build_output_paths(channel, program, start_time, end_time, recording_id):
+@@ -1055,7 +1149,11 @@ def _build_output_paths(channel, program, start_time, end_time, recording_id):
          # TV fallback template when S/E are missing
          try:
              tv_fb = CoreSettings.get_dvr_tv_fallback_template()
@@ -341,6 +397,119 @@ diff --git a/apps/channels/tests/test_recording_pipeline.py b/apps/channels/test
  # =========================================================================
  
  class MapRecordingsByProgramIdTests(TestCase):
+diff --git a/apps/channels/tests/test_series_rule_dedup.py b/apps/channels/tests/test_series_rule_dedup.py
+--- a/apps/channels/tests/test_series_rule_dedup.py
++++ b/apps/channels/tests/test_series_rule_dedup.py
+@@ -53,7 +53,8 @@ def setUp(self):
+         _set_dvr_offsets(pre_min=0, post_min=0)
+ 
+     def _create_program(self, hours_from_now=1, title="Test Show",
+-                        sub_title="Episode 1", tvg_id="test.channel.1"):
++                        sub_title="Episode 1", tvg_id="test.channel.1",
++                        custom_properties=None):
+         """Create a ProgramData at the given offset."""
+         start = self.now + timedelta(hours=hours_from_now)
+         end = start + timedelta(hours=1)
+@@ -64,6 +65,7 @@ def _create_program(self, hours_from_now=1, title="Test Show",
+             end_time=end,
+             title=title,
+             sub_title=sub_title,
++            custom_properties=custom_properties or {},
+         )
+ 
+     def _simulate_epg_refresh(self, programs_data):
+@@ -83,6 +85,7 @@ def _program_data_for_refresh(self, prog):
+             "end_time": prog.end_time,
+             "title": prog.title,
+             "sub_title": prog.sub_title,
++            "custom_properties": prog.custom_properties,
+         }
+ 
+ 
+@@ -117,6 +120,83 @@ def test_no_duplicate_after_epg_refresh(self, mock_release, mock_lock,
+         self.assertEqual(Recording.objects.count(), 1)
+         self.assertEqual(result2["scheduled"], 0)
+ 
++    @patch("apps.channels.tasks.acquire_task_lock", return_value=True)
++    @patch("apps.channels.tasks.release_task_lock")
++    def test_series_recording_persists_original_air_date(
++        self, mock_release, mock_lock, mock_schedule, mock_artwork
++    ):
++        """Series scheduling stores the canonical date before EPG IDs can change."""
++        from apps.channels.tasks import evaluate_series_rules_impl
++
++        self._create_program(
++            hours_from_now=2,
++            custom_properties={
++                "date": "2026-08-01",
++                "previously_shown_details": {
++                    "start": "20161215000000 +0100"
++                },
++            },
++        )
++        evaluate_series_rules_impl()
++
++        program = Recording.objects.get().custom_properties["program"]
++        self.assertEqual(program["original_air_date"], "2016-12-15")
++        self.assertNotEqual(program["original_air_date"], "2026-08-01")
++
++    @patch("apps.channels.tasks.acquire_task_lock", return_value=True)
++    @patch("apps.channels.tasks.release_task_lock")
++    def test_queued_series_recording_recovers_date_after_epg_refresh(
++        self, mock_release, mock_lock, mock_schedule, mock_artwork
++    ):
++        """Pre-fix queued recordings recover metadata by stable programme keys."""
++        from apps.channels.tasks import (
++            _build_output_paths,
++            evaluate_series_rules_impl,
++        )
++
++        prog = self._create_program(
++            hours_from_now=2,
++            custom_properties={
++                "date": "2026-08-01",
++                "previously_shown_details": {"start": "2016-12-15"},
++            },
++        )
++        evaluate_series_rules_impl()
++        rec = Recording.objects.get()
++
++        # Simulate a recording queued by the previous image: it has a stale
++        # ProgramData ID and no persisted original_air_date.
++        program = rec.custom_properties["program"]
++        program.pop("original_air_date", None)
++        stale_program_id = program["id"]
++        self._simulate_epg_refresh([self._program_data_for_refresh(prog)])
++        self.assertFalse(ProgramData.objects.filter(id=stale_program_id).exists())
++
++        with patch(
++            "apps.channels.tasks.CoreSettings.get_dvr_tv_template",
++            return_value="TV/{show}/S{season:02d}E{episode:02d}.mkv",
++        ), patch(
++            "apps.channels.tasks.CoreSettings.get_dvr_tv_fallback_template",
++            return_value=(
++                "TV/{show}/{show} - {original_air_date} - {sub_title}.mkv"
++            ),
++        ), patch(
++            "apps.channels.tasks.CoreSettings.get_dvr_movie_template",
++            return_value="Movies/{title} ({year}).mkv",
++        ), patch("os.stat", side_effect=OSError), patch("os.makedirs"):
++            final_path = _build_output_paths(
++                self.channel,
++                program,
++                rec.start_time,
++                rec.end_time,
++                rec.id,
++            )[0]
++
++        self.assertTrue(final_path.endswith(
++            "TV/Test Show/Test Show - 2016-12-15 - Episode 1.mkv"
++        ))
++        self.assertNotIn("2026-08-01", final_path)
++
+     @patch("apps.channels.tasks.acquire_task_lock", return_value=True)
+     @patch("apps.channels.tasks.release_task_lock")
+     def test_no_duplicate_with_offsets_after_refresh(self, mock_release, mock_lock,
 diff --git a/frontend/src/components/forms/settings/DvrSettingsForm.jsx b/frontend/src/components/forms/settings/DvrSettingsForm.jsx
 --- a/frontend/src/components/forms/settings/DvrSettingsForm.jsx
 +++ b/frontend/src/components/forms/settings/DvrSettingsForm.jsx

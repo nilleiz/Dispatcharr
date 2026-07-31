@@ -101,7 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           docker pull ghcr.io/dispatcharr/dispatcharr:base
-          docker run --rm --entrypoint ""             -v "${GITHUB_WORKSPACE}/upstream-src:/work"             -w /work             -e GITHUB_WORKSPACE=/work             -e DISPATCHARR_ENV=aio             -e DJANGO_SECRET_KEY=ci-test-secret-key             -e POSTGRES_DB=dispatcharr             -e POSTGRES_USER=dispatch             -e POSTGRES_PASSWORD=secret             -e DISPATCHARR_LOG_LEVEL=WARNING             ghcr.io/dispatcharr/dispatcharr:base             bash scripts/ci_bootstrap_backend.sh             apps.channels.tests.test_recording_pipeline -v2
+          docker run --rm --entrypoint ""             -v "${GITHUB_WORKSPACE}/upstream-src:/work"             -w /work             -e GITHUB_WORKSPACE=/work             -e DISPATCHARR_ENV=aio             -e DJANGO_SECRET_KEY=ci-test-secret-key             -e POSTGRES_DB=dispatcharr             -e POSTGRES_USER=dispatch             -e POSTGRES_PASSWORD=secret             -e DISPATCHARR_LOG_LEVEL=WARNING             ghcr.io/dispatcharr/dispatcharr:base             bash scripts/ci_bootstrap_backend.sh             apps.channels.tests.test_recording_pipeline             apps.channels.tests.test_series_rule_dedup -v2
 
       - name: Set up Node.js
         if: steps.release.outputs.should_build == 'true'
