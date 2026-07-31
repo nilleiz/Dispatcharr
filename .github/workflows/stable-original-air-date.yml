@@ -221,6 +221,31 @@ jobs:
           cache-from: type=gha,scope=stable-original-air-date
           cache-to: type=gha,mode=max,scope=stable-original-air-date
 
+      - name: Verify candidate multi-arch manifest
+        id: manifest
+        if: steps.release.outputs.candidate_tag != ''
+        env:
+          CANDIDATE_TAG: ${{ steps.release.outputs.candidate_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_URL="https://hub.docker.com/v2/repositories/nillivanilli0815/dispatcharr-original-air-date/tags/${CANDIDATE_TAG}"
+          MANIFEST_JSON=""
+          for attempt in $(seq 1 30); do
+            if MANIFEST_JSON="$(curl --fail --silent --show-error "$TAG_URL")"; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "::error::Candidate tag did not become available: ${CANDIDATE_TAG}"
+              exit 1
+            fi
+            sleep 20
+          done
+          ARCHES="$(jq -r '.images[] | select(.os == "linux") | .architecture' <<<"$MANIFEST_JSON" | sort -u)"
+          grep -qx 'amd64' <<<"$ARCHES"
+          grep -qx 'arm64' <<<"$ARCHES"
+          echo "Verified ${CANDIDATE_TAG} for linux/amd64 and linux/arm64."
+
       - name: Create or update fork failure issue
         if: failure()
         env:
@@ -258,4 +283,25 @@ jobs:
           ISSUE_NUMBER="$(gh issue list             --repo "$GITHUB_REPOSITORY"             --state open             --search "$TITLE in:title"             --json number             --jq '.[0].number // empty')"
           if [ -n "$ISSUE_NUMBER" ]; then
             gh issue close "$ISSUE_NUMBER"               --repo "$GITHUB_REPOSITORY"               --comment "Resolved by workflow run https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          fi
+
+
+      - name: Create or update fork publication status
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
+          CANDIDATE_TAG: ${{ steps.release.outputs.candidate_tag }}
+          CANDIDATE_EXISTS: ${{ steps.release.outputs.candidate_exists }}
+          SHOULD_BUILD: ${{ steps.release.outputs.should_build }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TITLE="[automation] Stable DVR original-air image publication"
+          BODY="$(printf '%s\n'             "Fork-only Docker publication status."             ""             "- Upstream stable tag: \`${UPSTREAM_TAG}\`"             "- Candidate tag: \`${CANDIDATE_TAG}\`"             "- Candidate already existed at start: \`${CANDIDATE_EXISTS}\`"             "- Built during this run: \`${SHOULD_BUILD}\`"             "- Manifest: \`linux/amd64, linux/arm64\`"             "- Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")"
+          ISSUE_NUMBER="$(gh issue list             --repo "$GITHUB_REPOSITORY"             --state open             --search "$TITLE in:title"             --json number             --jq '.[0].number // empty')"
+          if [ -n "$ISSUE_NUMBER" ]; then
+            gh issue edit "$ISSUE_NUMBER"               --repo "$GITHUB_REPOSITORY"               --body "$BODY"
+          else
+            gh issue create               --repo "$GITHUB_REPOSITORY"               --title "$TITLE"               --body "$BODY"
           fi
