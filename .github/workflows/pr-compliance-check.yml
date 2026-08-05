@@ -6,9 +6,13 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      - name: Fork compliance check
+        if: github.repository_owner != 'Dispatcharr'
+        run: echo "Upstream repository bot checks are unavailable in forks; upstream CI will enforce them."
 
       # Request a bot user token
       - uses: actions/create-github-app-token@v1
+        if: github.repository_owner == 'Dispatcharr'
         id: app-token
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
@@ -16,12 +20,14 @@ jobs:
 
       # Delete old bot comments before posting fresh ones
       - uses: Dispatcharr/repo-bot/actions/comment-collapse@v1
+        if: github.repository_owner == 'Dispatcharr'
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           mode: delete
 
       # Template + Agreement Check
       - uses: Dispatcharr/repo-bot/actions/template-enforcer@v1
+        if: github.repository_owner == 'Dispatcharr'
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           event-type: pull_request
@@ -45,6 +51,7 @@ jobs:
 
       # Target Check
       - uses: Dispatcharr/repo-bot/actions/branch-guard@v1
+        if: github.repository_owner == 'Dispatcharr'
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           allowed-targets: "dev"
