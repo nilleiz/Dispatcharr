@@ -1,0 +1,140 @@
+name: Fork Feature CI
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'apps/channels/tasks.py'
+      - 'apps/channels/tests/test_recording_pipeline.py'
+      - 'apps/channels/tests/test_series_rule_dedup.py'
+      - 'frontend/**'
+      - 'docker/**'
+      - '.github/workflows/fork-feature-ci.yml'
+  push:
+    branches: [feature/dvr-original-air-date]
+  workflow_dispatch:
+    inputs:
+      checkout_ref:
+        description: Branch or commit to validate
+        required: true
+        default: feature/dvr-original-air-date
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: fork-feature-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diff-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Check patch whitespace
+        run: git diff --check
+
+  backend:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/dispatcharr/dispatcharr:base-dev
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --entrypoint ""
+    env:
+      DISPATCHARR_ENV: aio
+      DJANGO_SECRET_KEY: ci-test-secret-key
+      POSTGRES_DB: dispatcharr
+      POSTGRES_USER: dispatch
+      POSTGRES_PASSWORD: secret
+      DISPATCHARR_LOG_LEVEL: WARNING
+      SYNC_PYTHON_DEPS: 'false'
+    steps:
+      - name: Checkout feature source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_ref || github.sha }}
+
+      - name: Run focused DVR tests
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: >-
+          bash scripts/ci_bootstrap_backend.sh
+          apps.channels.tests.test_recording_pipeline
+          apps.channels.tests.test_series_rule_dedup -v2
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout feature source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_ref || github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint changed frontend files
+        run: >-
+          npx eslint
+          src/components/forms/settings/DvrSettingsForm.jsx
+          src/components/forms/settings/__tests__/DvrSettingsForm.test.jsx
+
+      - name: Check formatting of changed frontend files
+        run: >-
+          npx prettier --check
+          src/components/forms/settings/DvrSettingsForm.jsx
+          src/components/forms/settings/__tests__/DvrSettingsForm.test.jsx
+
+      - name: Run DVR settings tests
+        run: >-
+          npm test --
+          src/components/forms/settings/__tests__/DvrSettingsForm.test.jsx
+
+      - name: Build frontend
+        run: npm run build
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_ref || github.sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image without publishing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          platforms: linux/amd64
+          build-args: |
+            REPO_OWNER=dispatcharr
+            REPO_NAME=dispatcharr
+            BASE_TAG=base
+            BRANCH=dev
+            REPO_URL=https://github.com/Dispatcharr/Dispatcharr
+          cache-from: type=gha,scope=dvr-original-air-date
+          cache-to: type=gha,mode=max,scope=dvr-original-air-date
