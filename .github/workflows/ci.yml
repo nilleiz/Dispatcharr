@@ -160,8 +160,10 @@ jobs:
             ${{ github.event_name != 'pull_request' && format('docker.io/{0}/{1}:{2}-{3}-{4}', secrets.DOCKERHUB_ORGANIZATION, needs.prepare.outputs.repo_name, needs.prepare.outputs.version, needs.prepare.outputs.timestamp, matrix.platform) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            REPO_OWNER=${{ needs.prepare.outputs.repo_owner }}
-            REPO_NAME=${{ needs.prepare.outputs.repo_name }}
+            # Fork builds use the official Dispatcharr base image while
+            # retaining fork-owned output tags and metadata.
+            REPO_OWNER=dispatcharr
+            REPO_NAME=dispatcharr
             BASE_TAG=base
             BRANCH=${{ github.ref_name }}
             REPO_URL=https://github.com/${{ github.repository }}
@@ -172,12 +174,17 @@ jobs:
     # wait for prepare and all matrix builds to finish
     needs: [prepare, docker]
     runs-on: ubuntu-24.04
-    if: ${{ github.event_name != 'pull_request' }}
     steps:
+      - name: Skip manifest publishing for pull requests
+        if: github.event_name == 'pull_request'
+        run: echo "Image publishing is intentionally disabled for pull requests."
+
       - name: Set up Docker Buildx
+        if: github.event_name != 'pull_request'
         uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -185,6 +192,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: docker.io
@@ -192,6 +200,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Create multi-arch manifest tags
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           OWNER=${{ needs.prepare.outputs.repo_owner }}
