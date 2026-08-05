@@ -63,13 +63,10 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_ref || github.sha }}
 
-      - name: Run focused DVR tests
+      - name: Run full backend test suite
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
-        run: >-
-          bash scripts/ci_bootstrap_backend.sh
-          apps.channels.tests.test_recording_pipeline
-          apps.channels.tests.test_series_rule_dedup -v2
+        run: bash scripts/ci_bootstrap_backend.sh -v2
 
   frontend:
     runs-on: ubuntu-latest
