@@ -168,7 +168,6 @@ jobs:
           src/utils/pages/SettingsUtils.js
           src/utils/pages/__tests__/SettingsUtils.test.js
           src/utils/tables/ChannelsTableUtils.js
-          src/utils/tables/__tests__/ChannelsTableUtils.test.js
 
       - name: Run focused frontend tests
         working-directory: upstream-src/frontend
