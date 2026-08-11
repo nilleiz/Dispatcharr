@@ -360,12 +360,11 @@ index 03a16f1..3a35f80 100644
      ];
      if (booleanFields.includes(formKey) && value != null) {
        if (typeof value === 'boolean') {
-@@ -305,6 +307,8 @@ export const parseSettings = (settings) => {
+@@ -305,6 +307,7 @@ export const parseSettings = (settings) => {
      epgSettings && Array.isArray(epgSettings.epg_match_ignore_custom)
        ? epgSettings.epg_match_ignore_custom
        : [];
-+  parsed.plex_epg_compatibility =
-+    epgSettings?.plex_epg_compatibility === true;
++  parsed.plex_epg_compatibility = epgSettings?.plex_epg_compatibility === true;
 
    // DVR settings - direct mapping with underscore keys
    const dvrSettings = settings['dvr_settings']?.value;
