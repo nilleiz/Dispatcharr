@@ -1,0 +1,155 @@
+diff --git a/apps/epg/sd_tasks.py b/apps/epg/sd_tasks.py
+index 123994fc..4d017ab8 100644
+--- a/apps/epg/sd_tasks.py
++++ b/apps/epg/sd_tasks.py
+@@ -1629,6 +1629,7 @@ def fetch_schedules_direct(
+                 movie_year = meta.get('movie', {}).get('year', '')
+                 if original_air_date:
+                     custom_props['date'] = original_air_date
++                    custom_props['original_air_date'] = original_air_date
+                 elif movie_year:
+                     custom_props['date'] = str(movie_year)
+
+diff --git a/apps/epg/serializers.py b/apps/epg/serializers.py
+index d84aaa50..27e401a3 100644
+--- a/apps/epg/serializers.py
++++ b/apps/epg/serializers.py
+@@ -154,7 +154,9 @@ class ProgramDetailSerializer(ProgramDataSerializer):
+         # Dates
+         data['production_date'] = cp.get('date')
+         previously_shown = cp.get('previously_shown_details') or {}
+-        data['original_air_date'] = previously_shown.get('start')
++        data['original_air_date'] = (
++            cp.get('original_air_date') or previously_shown.get('start')
++        )
+
+         # Content advisory (SD)
+         data['content_advisory'] = cp.get('content_advisory') or []
+diff --git a/apps/epg/tasks.py b/apps/epg/tasks.py
+index fc2deee1..0b7352da 100644
+--- a/apps/epg/tasks.py
++++ b/apps/epg/tasks.py
+@@ -2592,6 +2592,9 @@ def extract_custom_properties(prog):
+         elif system == 'dd_progid' and ep_num.text:
+             # Store the dd_progid format
+             custom_props['dd_progid'] = ep_num.text.strip()
++        elif system == 'original-air-date' and ep_num.text:
++            # Preserve date-based episode identity for downstream XMLTV clients.
++            custom_props['original_air_date'] = ep_num.text.strip()
+         # Add support for other systems like thetvdb.com, themoviedb.org, imdb.com
+         elif system in ['thetvdb.com', 'themoviedb.org', 'imdb.com'] and ep_num.text:
+             custom_props[f'{system}_id'] = ep_num.text.strip()
+diff --git a/apps/epg/tests/test_extract_custom_properties.py b/apps/epg/tests/test_extract_custom_properties.py
+index 1ad8d63f..19b0b47a 100644
+--- a/apps/epg/tests/test_extract_custom_properties.py
++++ b/apps/epg/tests/test_extract_custom_properties.py
+@@ -42,3 +42,11 @@ class ExtractCustomPropertiesEpisodeNumTests(SimpleTestCase):
+         self.assertNotIn('onscreen_episode', props)
+         self.assertEqual(props.get('season'), 1)
+         self.assertEqual(props.get('episode'), 119)
++
++    def test_original_air_date_preserved(self):
++        props = extract_custom_properties(
++            _programme(
++                '<episode-num system="original-air-date">2023-02-19</episode-num>'
++            )
++        )
++        self.assertEqual(props.get('original_air_date'), '2023-02-19')
+diff --git a/apps/epg/tests/test_serializers.py b/apps/epg/tests/test_serializers.py
+index 7ce7716d..c4845f7c 100644
+--- a/apps/epg/tests/test_serializers.py
++++ b/apps/epg/tests/test_serializers.py
+@@ -632,6 +632,16 @@ class ProgramDetailSerializerTests(TestCase):
+         data = ProgramDetailSerializer(program).data
+         self.assertEqual(data["original_air_date"], "2013-09-15")
+
++    def test_explicit_original_air_date_takes_priority(self):
++        program = self._create_program(
++            custom_properties={
++                "original_air_date": "2023-02-19",
++                "previously_shown_details": {"start": "2026-08-11"},
++            }
++        )
++        data = ProgramDetailSerializer(program).data
++        self.assertEqual(data["original_air_date"], "2023-02-19")
++
+     def test_external_ids(self):
+         program = self._create_program(
+             custom_properties={
+diff --git a/apps/output/epg.py b/apps/output/epg.py
+index 03e947eb..ee94563e 100644
+--- a/apps/output/epg.py
++++ b/apps/output/epg.py
+@@ -1466,6 +1466,13 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
+                         if 'dd_progid' in custom_data:
+                             program_xml.append(f'    <episode-num system="dd_progid">{html.escape(custom_data["dd_progid"])}</episode-num>')
+
++                        if 'original_air_date' in custom_data:
++                            program_xml.append(
++                                '    <episode-num system="original-air-date">'
++                                f'{html.escape(custom_data["original_air_date"])}'
++                                '</episode-num>'
++                            )
++
+                         # Handle external database IDs
+                         for system in ['thetvdb.com', 'themoviedb.org', 'imdb.com']:
+                             if f'{system}_id' in custom_data:
+diff --git a/apps/output/tests/test_views.py b/apps/output/tests/test_views.py
+index 1fd6bb7b..34b07751 100644
+--- a/apps/output/tests/test_views.py
++++ b/apps/output/tests/test_views.py
+@@ -296,6 +296,54 @@ class OutputEPGXMLEscapingTest(OutputEndpointTestMixin, TestCase):
+         self.assertLess(content.find('<title>First</title>'), content.find('<title>Second</title>'))
+         self.assertLess(content.find('<title>Second</title>'), content.find('<title>Third</title>'))
+
++    def test_original_air_date_episode_number_is_exported(self):
++        """Date-based episode identity survives the XMLTV output round trip."""
++        from django.utils import timezone
++        from apps.epg.models import ProgramData
++
++        epg_source = EPGSource.objects.create(name="Date EPG", source_type="xmltv")
++        epg_data = EPGData.objects.create(
++            name="Date Station", epg_source=epg_source, tvg_id="date.station"
++        )
++        self._add_channel(
++            channel_number=150.0,
++            name="Date Channel",
++            tvg_id="date.station",
++            epg_data=epg_data,
++        )
++        now = timezone.now()
++        ProgramData.objects.create(
++            epg=epg_data,
++            start_time=now + timedelta(hours=1),
++            end_time=now + timedelta(hours=2),
++            title="Terra X",
++            sub_title="Eisige Welten II - Planet der Extreme",
++            tvg_id="date.station",
++            custom_properties={
++                "dd_progid": "EP01646084.0886",
++                "original_air_date": "2023-02-19",
++                "previously_shown": True,
++                "previously_shown_details": {"start": "2023-02-19"},
++            },
++        )
++
++        content = _response_text(
++            self.client.get(self._epg_url("tvg_id_source=tvg_id&days=1"))
++        )
++        tree = ET.fromstring(content)
++        programme = next(
++            item for item in tree.findall(".//programme")
++            if item.findtext("sub-title") == "Eisige Welten II - Planet der Extreme"
++        )
++        episode_numbers = {
++            item.get("system"): item.text for item in programme.findall("episode-num")
++        }
++        self.assertEqual(episode_numbers["dd_progid"], "EP01646084.0886")
++        self.assertEqual(episode_numbers["original-air-date"], "2023-02-19")
++        self.assertEqual(
++            programme.find("previously-shown").get("start"), "2023-02-19"
++        )
++
+     def test_override_epg_change_invalidates_xmltv_chunk_cache(self):
+         """
+         XC reads live ProgramData; XMLTV is chunk-cached. Changing the
