@@ -1,11 +1,13 @@
-name: Stable XMLTV Original Air Date Image
+name: Stable Combined Original Air Date Image
 
 on:
   push:
     branches:
+      - main
       - agent/preserve-xmltv-original-air-date
       - agent/plex-epg-compatibility
     paths:
+      - 'patches/dvr-original-air-date.patch'
       - 'patches/xmltv-original-air-date.patch'
       - '.github/workflows/stable-xmltv-original-air-date.yml'
   pull_request:
@@ -13,6 +15,7 @@ on:
       - main
       - agent/preserve-xmltv-original-air-date
     paths:
+      - 'patches/dvr-original-air-date.patch'
       - 'patches/xmltv-original-air-date.patch'
       - '.github/workflows/stable-xmltv-original-air-date.yml'
   schedule:
@@ -30,7 +33,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: stable-xmltv-original-air-date-${{ github.event.pull_request.number || github.ref }}
+  group: stable-combined-original-air-date-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -63,7 +66,7 @@ jobs:
             exit 1
           fi
 
-          PATCH_SHA="$(sha256sum patches/xmltv-original-air-date.patch | cut -c1-12)"
+          PATCH_SHA="$(sha256sum patches/dvr-original-air-date.patch patches/xmltv-original-air-date.patch | sha256sum | cut -c1-12)"
           CANDIDATE_TAG="candidate-${UPSTREAM_TAG}-${PATCH_SHA}"
           CANDIDATE_URL="https://hub.docker.com/v2/repositories/nillivanilli0815/dispatcharr-xmltv-original-air-date/tags/${CANDIDATE_TAG}/"
           CANDIDATE_EXISTS=false
@@ -89,11 +92,13 @@ jobs:
           path: upstream-src
           fetch-depth: 1
 
-      - name: Verify and apply XMLTV feature patch
+      - name: Verify and apply combined feature patches
         shell: bash
         run: |
           set -euo pipefail
           git -C upstream-src describe --tags --exact-match
+          git -C upstream-src apply --check ../patches/dvr-original-air-date.patch
+          git -C upstream-src apply ../patches/dvr-original-air-date.patch
           git -C upstream-src apply --check ../patches/xmltv-original-air-date.patch
           git -C upstream-src apply ../patches/xmltv-original-air-date.patch
           git -C upstream-src diff --check
@@ -115,6 +120,8 @@ jobs:
             -e DISPATCHARR_LOG_LEVEL=WARNING \
             ghcr.io/dispatcharr/dispatcharr:base \
             bash scripts/ci_bootstrap_backend.sh \
+              apps.channels.tests.test_recording_pipeline \
+              apps.channels.tests.test_series_rule_dedup \
               apps.epg.tests.test_extract_custom_properties \
               apps.epg.tests.test_serializers \
               apps.output.tests.test_views.OutputEPGXMLEscapingTest \
@@ -131,10 +138,37 @@ jobs:
         working-directory: upstream-src/frontend
         run: npm ci
 
+      - name: Lint changed frontend files
+        working-directory: upstream-src/frontend
+        run: >-
+          npx eslint
+          src/components/forms/settings/DvrSettingsForm.jsx
+          src/components/forms/settings/SystemSettingsForm.jsx
+          src/components/forms/settings/__tests__/DvrSettingsForm.test.jsx
+          src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+          src/utils/forms/settings/SystemSettingsFormUtils.js
+          src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
+          src/utils/pages/SettingsUtils.js
+          src/utils/pages/__tests__/SettingsUtils.test.js
+
+      - name: Check changed frontend formatting
+        working-directory: upstream-src/frontend
+        run: >-
+          npx prettier --check
+          src/components/forms/settings/DvrSettingsForm.jsx
+          src/components/forms/settings/SystemSettingsForm.jsx
+          src/components/forms/settings/__tests__/DvrSettingsForm.test.jsx
+          src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+          src/utils/forms/settings/SystemSettingsFormUtils.js
+          src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
+          src/utils/pages/SettingsUtils.js
+          src/utils/pages/__tests__/SettingsUtils.test.js
+
       - name: Run focused frontend tests
         working-directory: upstream-src/frontend
         run: >-
           npm test --
+          src/components/forms/settings/__tests__/DvrSettingsForm.test.jsx
           src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
           src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
           src/utils/pages/__tests__/SettingsUtils.test.js
