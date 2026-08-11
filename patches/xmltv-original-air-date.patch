@@ -1,5 +1,5 @@
 diff --git a/apps/epg/sd_tasks.py b/apps/epg/sd_tasks.py
-index 123994fc..4d017ab8 100644
+index 123994f..4d017ab 100644
 --- a/apps/epg/sd_tasks.py
 +++ b/apps/epg/sd_tasks.py
 @@ -1629,6 +1629,7 @@ def fetch_schedules_direct(
@@ -11,7 +11,7 @@ index 123994fc..4d017ab8 100644
                      custom_props['date'] = str(movie_year)
 
 diff --git a/apps/epg/serializers.py b/apps/epg/serializers.py
-index d84aaa50..27e401a3 100644
+index d84aaa5..27e401a 100644
 --- a/apps/epg/serializers.py
 +++ b/apps/epg/serializers.py
 @@ -154,7 +154,9 @@ class ProgramDetailSerializer(ProgramDataSerializer):
@@ -26,7 +26,7 @@ index d84aaa50..27e401a3 100644
          # Content advisory (SD)
          data['content_advisory'] = cp.get('content_advisory') or []
 diff --git a/apps/epg/tasks.py b/apps/epg/tasks.py
-index fc2deee1..0b7352da 100644
+index fc2deee..0b7352d 100644
 --- a/apps/epg/tasks.py
 +++ b/apps/epg/tasks.py
 @@ -2592,6 +2592,9 @@ def extract_custom_properties(prog):
@@ -40,7 +40,7 @@ index fc2deee1..0b7352da 100644
          elif system in ['thetvdb.com', 'themoviedb.org', 'imdb.com'] and ep_num.text:
              custom_props[f'{system}_id'] = ep_num.text.strip()
 diff --git a/apps/epg/tests/test_extract_custom_properties.py b/apps/epg/tests/test_extract_custom_properties.py
-index 1ad8d63f..19b0b47a 100644
+index 1ad8d63..19b0b47 100644
 --- a/apps/epg/tests/test_extract_custom_properties.py
 +++ b/apps/epg/tests/test_extract_custom_properties.py
 @@ -42,3 +42,11 @@ class ExtractCustomPropertiesEpisodeNumTests(SimpleTestCase):
@@ -56,7 +56,7 @@ index 1ad8d63f..19b0b47a 100644
 +        )
 +        self.assertEqual(props.get('original_air_date'), '2023-02-19')
 diff --git a/apps/epg/tests/test_serializers.py b/apps/epg/tests/test_serializers.py
-index 7ce7716d..c4845f7c 100644
+index 7ce7716..c4845f7 100644
 --- a/apps/epg/tests/test_serializers.py
 +++ b/apps/epg/tests/test_serializers.py
 @@ -632,6 +632,16 @@ class ProgramDetailSerializerTests(TestCase):
@@ -77,11 +77,47 @@ index 7ce7716d..c4845f7c 100644
          program = self._create_program(
              custom_properties={
 diff --git a/apps/output/epg.py b/apps/output/epg.py
-index 03e947eb..ee94563e 100644
+index 03e947e..23259a9 100644
 --- a/apps/output/epg.py
 +++ b/apps/output/epg.py
-@@ -1466,6 +1466,13 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
-                         if 'dd_progid' in custom_data:
+@@ -22,6 +22,7 @@ from apps.channels.utils import format_channel_number
+ from apps.epg.models import ProgramData
+ from apps.epg.utils import sd_poster_proxy_path
+ from apps.output.streaming_chunk_cache import stream_cached_response
++from core.models import CoreSettings
+ from core.utils import build_absolute_uri_with_port, log_system_event
+
+ logger = logging.getLogger(__name__)
+@@ -1113,12 +1114,13 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
+             prev_days = 0
+     use_cached_logos = request.GET.get('cachedlogos', 'true').lower() != 'false'
+     tvg_id_source = request.GET.get('tvg_id_source', 'channel_number').lower()
++    plex_epg_compatibility = CoreSettings.get_plex_epg_compatibility()
+
+     request_origin = build_absolute_uri_with_port(request, "")
+     cache_params = (
+         f"{profile_name or 'all'}:{user.username if user else 'anonymous'}"
+         f":d={num_days}:p={prev_days}:logos={use_cached_logos}:tvgid={tvg_id_source}"
+-        f":origin={request_origin}"
++        f":origin={request_origin}:plex={plex_epg_compatibility}"
+     )
+     content_cache_key = f"epg_content:{cache_params}"
+
+@@ -1463,9 +1465,25 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
+                             program_xml.append(f'    <episode-num system="onscreen">E{custom_data["episode"]}</episode-num>')
+
+                         # Handle dd_progid format
+-                        if 'dd_progid' in custom_data:
++                        has_season_episode = (
++                            custom_data.get('season') is not None
++                            and custom_data.get('episode') is not None
++                        )
++                        suppress_dd_progid = (
++                            plex_epg_compatibility
++                            and 'original_air_date' in custom_data
++                            and not has_season_episode
++                        )
++                        if 'dd_progid' in custom_data and not suppress_dd_progid:
                              program_xml.append(f'    <episode-num system="dd_progid">{html.escape(custom_data["dd_progid"])}</episode-num>')
 
 +                        if 'original_air_date' in custom_data:
@@ -95,10 +131,10 @@ index 03e947eb..ee94563e 100644
                          for system in ['thetvdb.com', 'themoviedb.org', 'imdb.com']:
                              if f'{system}_id' in custom_data:
 diff --git a/apps/output/tests/test_views.py b/apps/output/tests/test_views.py
-index 1fd6bb7b..34b07751 100644
+index 1fd6bb7..631bc70 100644
 --- a/apps/output/tests/test_views.py
 +++ b/apps/output/tests/test_views.py
-@@ -296,6 +296,54 @@ class OutputEPGXMLEscapingTest(OutputEndpointTestMixin, TestCase):
+@@ -296,6 +296,76 @@ class OutputEPGXMLEscapingTest(OutputEndpointTestMixin, TestCase):
          self.assertLess(content.find('<title>First</title>'), content.find('<title>Second</title>'))
          self.assertLess(content.find('<title>Second</title>'), content.find('<title>Third</title>'))
 
@@ -150,6 +186,204 @@ index 1fd6bb7b..34b07751 100644
 +            programme.find("previously-shown").get("start"), "2023-02-19"
 +        )
 +
++        from core.models import CoreSettings, EPG_SETTINGS_KEY
++
++        CoreSettings.objects.create(
++            key=EPG_SETTINGS_KEY,
++            name="EPG Settings",
++            value={"plex_epg_compatibility": True},
++        )
++        compat_content = _response_text(
++            self.client.get(self._epg_url("tvg_id_source=tvg_id&days=1"))
++        )
++        compat_tree = ET.fromstring(compat_content)
++        compat_programme = next(
++            item for item in compat_tree.findall(".//programme")
++            if item.findtext("sub-title") == "Eisige Welten II - Planet der Extreme"
++        )
++        compat_numbers = {
++            item.get("system"): item.text
++            for item in compat_programme.findall("episode-num")
++        }
++        self.assertNotIn("dd_progid", compat_numbers)
++        self.assertEqual(compat_numbers["original-air-date"], "2023-02-19")
++
      def test_override_epg_change_invalidates_xmltv_chunk_cache(self):
          """
          XC reads live ProgramData; XMLTV is chunk-cached. Changing the
+diff --git a/core/models.py b/core/models.py
+index 01793f2..044f251 100644
+--- a/core/models.py
++++ b/core/models.py
+@@ -588,8 +588,14 @@ class CoreSettings(models.Model):
+             "epg_match_ignore_prefixes": [],
+             "epg_match_ignore_suffixes": [],
+             "epg_match_ignore_custom": [],
++            "plex_epg_compatibility": False,
+         })
+
++    @classmethod
++    def get_plex_epg_compatibility(cls):
++        """Whether XMLTV output should avoid Plex's dd_progid fallback."""
++        return cls.get_epg_settings().get("plex_epg_compatibility") is True
++
+     @classmethod
+     def _safe_string_list(cls, value):
+         """Return a list of strings, filtering out non-list or non-string values."""
+diff --git a/core/tests/test_core.py b/core/tests/test_core.py
+index 6ece81b..acbabe1 100644
+--- a/core/tests/test_core.py
++++ b/core/tests/test_core.py
+@@ -663,6 +663,21 @@ class EpgIgnoreListsTest(TestCase):
+             self.assertEqual(getter(), [])
+
+
++class PlexEpgCompatibilityTest(TestCase):
++    def test_disabled_by_default(self):
++        self.assertFalse(CoreSettings.get_plex_epg_compatibility())
++
++    def test_only_literal_true_enables_compatibility(self):
++        setting, _ = CoreSettings.objects.get_or_create(
++            key=EPG_SETTINGS_KEY,
++            defaults={"name": "EPG Settings", "value": {}},
++        )
++        for value, expected in [(True, True), (False, False), ("true", False), (1, False)]:
++            setting.value = {"plex_epg_compatibility": value}
++            setting.save()
++            self.assertEqual(CoreSettings.get_plex_epg_compatibility(), expected)
++
++
+ class DropDBCommandTlsTest(TestCase):
+     """Verify dropdb management command passes TLS parameters to psycopg."""
+     databases = []
+diff --git a/frontend/src/components/forms/settings/SystemSettingsForm.jsx b/frontend/src/components/forms/settings/SystemSettingsForm.jsx
+index 2a8c9b7..42aa8a4 100644
+--- a/frontend/src/components/forms/settings/SystemSettingsForm.jsx
++++ b/frontend/src/components/forms/settings/SystemSettingsForm.jsx
+@@ -115,6 +115,15 @@ const SystemSettingsForm = React.memo(({ active }) => {
+         {...form.getInputProps('catchup_enabled', { type: 'checkbox' })}
+         id="catchup_enabled"
+       />
++      <Divider my="md" label="EPG Output" labelPosition="left" />
++      <Switch
++        label="Plex EPG Compatibility"
++        description="For unnumbered programmes with an original air date, omit dd_progid so Plex uses the date instead of inventing an episode number. Other XMLTV identifiers are unchanged."
++        {...form.getInputProps('plex_epg_compatibility', {
++          type: 'checkbox',
++        })}
++        id="plex_epg_compatibility"
++      />
+       {isModular && (
+         <>
+           <Divider my="md" label="Connection Security" labelPosition="left" />
+diff --git a/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx b/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+index 577141c..09e1c67 100644
+--- a/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
++++ b/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+@@ -116,6 +116,7 @@ const setupMocks = ({
+     auto_import_mapped_files: true,
+     enable_ip_lookup: true,
+     catchup_enabled: true,
++    plex_epg_compatibility: false,
+   };
+
+   const formMock = {
+@@ -215,6 +216,12 @@ describe('SystemSettingsForm', () => {
+       expect(screen.getByTestId('catchup_enabled')).toBeInTheDocument();
+     });
+
++    it('renders the Plex EPG compatibility switch', () => {
++      setupMocks();
++      render(<SystemSettingsForm active={true} />);
++      expect(screen.getByTestId('plex_epg_compatibility')).toBeInTheDocument();
++    });
++
+     it('does not show success alert on initial render', () => {
+       setupMocks();
+       render(<SystemSettingsForm active={true} />);
+diff --git a/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js b/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js
+index b2b4c18..8a7b0a1 100644
+--- a/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js
++++ b/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js
+@@ -5,5 +5,6 @@ export const getSystemSettingsFormInitialValues = () => {
+     auto_import_mapped_files: true,
+     enable_ip_lookup: true,
+     catchup_enabled: true,
++    plex_epg_compatibility: false,
+   };
+ };
+diff --git a/frontend/src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js b/frontend/src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
+index a160cd2..67f693e 100644
+--- a/frontend/src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
++++ b/frontend/src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
+@@ -13,6 +13,7 @@ describe('SystemSettingsFormUtils', () => {
+         auto_import_mapped_files: true,
+         enable_ip_lookup: true,
+         catchup_enabled: true,
++        plex_epg_compatibility: false,
+       });
+     });
+
+@@ -41,6 +42,7 @@ describe('SystemSettingsFormUtils', () => {
+       expect(result).toHaveProperty('max_system_events');
+       expect(result).toHaveProperty('preferred_region');
+       expect(result).toHaveProperty('auto_import_mapped_files');
++      expect(result).toHaveProperty('plex_epg_compatibility', false);
+     });
+   });
+ });
+diff --git a/frontend/src/utils/pages/SettingsUtils.js b/frontend/src/utils/pages/SettingsUtils.js
+index 03a16f1..3a35f80 100644
+--- a/frontend/src/utils/pages/SettingsUtils.js
++++ b/frontend/src/utils/pages/SettingsUtils.js
+@@ -39,6 +39,7 @@ export const saveChangedSettings = async (settings, changedSettings) => {
+     'epg_match_ignore_prefixes',
+     'epg_match_ignore_suffixes',
+     'epg_match_ignore_custom',
++    'plex_epg_compatibility',
+   ];
+   const dvrFields = [
+     'tv_template',
+@@ -137,6 +138,7 @@ export const saveChangedSettings = async (settings, changedSettings) => {
+       'auto_import_mapped_files',
+       'enable_ip_lookup',
+       'catchup_enabled',
++      'plex_epg_compatibility',
+     ];
+     if (booleanFields.includes(formKey) && value != null) {
+       if (typeof value === 'boolean') {
+@@ -305,6 +307,8 @@ export const parseSettings = (settings) => {
+     epgSettings && Array.isArray(epgSettings.epg_match_ignore_custom)
+       ? epgSettings.epg_match_ignore_custom
+       : [];
++  parsed.plex_epg_compatibility =
++    epgSettings?.plex_epg_compatibility === true;
+
+   // DVR settings - direct mapping with underscore keys
+   const dvrSettings = settings['dvr_settings']?.value;
+diff --git a/frontend/src/utils/pages/__tests__/SettingsUtils.test.js b/frontend/src/utils/pages/__tests__/SettingsUtils.test.js
+index c3900f0..78d64e6 100644
+--- a/frontend/src/utils/pages/__tests__/SettingsUtils.test.js
++++ b/frontend/src/utils/pages/__tests__/SettingsUtils.test.js
+@@ -588,6 +588,21 @@ describe('SettingsUtils', () => {
+   });
+
+   describe('saveChangedSettings - EPG Mode', () => {
++    it('saves Plex compatibility to the EPG settings group', async () => {
++      const settings = {};
++      API.createSetting.mockResolvedValue({});
++
++      await SettingsUtils.saveChangedSettings(settings, {
++        plex_epg_compatibility: true,
++      });
++
++      expect(API.createSetting).toHaveBeenCalledWith({
++        key: 'epg_settings',
++        name: 'Epg Settings',
++        value: { plex_epg_compatibility: true },
++      });
++    });
++
+     it('should save epg_match_mode to epg_settings group', async () => {
+       const settings = {
+         epg_settings: {

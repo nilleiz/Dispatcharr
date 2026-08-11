@@ -2,12 +2,16 @@ name: Stable XMLTV Original Air Date Image
 
 on:
   push:
-    branches: [agent/preserve-xmltv-original-air-date]
+    branches:
+      - agent/preserve-xmltv-original-air-date
+      - agent/plex-epg-compatibility
     paths:
       - 'patches/xmltv-original-air-date.patch'
       - '.github/workflows/stable-xmltv-original-air-date.yml'
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - agent/preserve-xmltv-original-air-date
     paths:
       - 'patches/xmltv-original-air-date.patch'
       - '.github/workflows/stable-xmltv-original-air-date.yml'
@@ -113,7 +117,27 @@ jobs:
             bash scripts/ci_bootstrap_backend.sh \
               apps.epg.tests.test_extract_custom_properties \
               apps.epg.tests.test_serializers \
-              apps.output.tests.test_views.OutputEPGXMLEscapingTest -v2
+              apps.output.tests.test_views.OutputEPGXMLEscapingTest \
+              core.tests.test_core.PlexEpgCompatibilityTest -v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: upstream-src/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: upstream-src/frontend
+        run: npm ci
+
+      - name: Run focused frontend tests
+        working-directory: upstream-src/frontend
+        run: >-
+          npm test --
+          src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+          src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
+          src/utils/pages/__tests__/SettingsUtils.test.js
 
       - name: Set up QEMU
         if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
