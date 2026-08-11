@@ -88,22 +88,31 @@ index 03e947e..23259a9 100644
  from core.utils import build_absolute_uri_with_port, log_system_event
 
  logger = logging.getLogger(__name__)
-@@ -1113,12 +1114,13 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
+@@ -1113,12 +1114,22 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
              prev_days = 0
      use_cached_logos = request.GET.get('cachedlogos', 'true').lower() != 'false'
      tvg_id_source = request.GET.get('tvg_id_source', 'channel_number').lower()
-+    plex_epg_compatibility = CoreSettings.get_plex_epg_compatibility()
++    compatibility_override = request.GET.get('date_episode_compatibility')
++    if compatibility_override is None:
++        date_episode_compatibility = CoreSettings.get_plex_epg_compatibility()
++    else:
++        date_episode_compatibility = compatibility_override.lower() in (
++            '1',
++            'true',
++            'yes',
++            'on',
++        )
 
      request_origin = build_absolute_uri_with_port(request, "")
      cache_params = (
          f"{profile_name or 'all'}:{user.username if user else 'anonymous'}"
          f":d={num_days}:p={prev_days}:logos={use_cached_logos}:tvgid={tvg_id_source}"
 -        f":origin={request_origin}"
-+        f":origin={request_origin}:plex={plex_epg_compatibility}"
++        f":origin={request_origin}:date_episode={date_episode_compatibility}"
      )
      content_cache_key = f"epg_content:{cache_params}"
 
-@@ -1463,9 +1465,25 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
+@@ -1463,9 +1474,25 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
                              program_xml.append(f'    <episode-num system="onscreen">E{custom_data["episode"]}</episode-num>')
 
                          # Handle dd_progid format
@@ -113,7 +122,7 @@ index 03e947e..23259a9 100644
 +                            and custom_data.get('episode') is not None
 +                        )
 +                        suppress_dd_progid = (
-+                            plex_epg_compatibility
++                            date_episode_compatibility
 +                            and 'original_air_date' in custom_data
 +                            and not has_season_episode
 +                        )
@@ -134,7 +143,7 @@ diff --git a/apps/output/tests/test_views.py b/apps/output/tests/test_views.py
 index 1fd6bb7..631bc70 100644
 --- a/apps/output/tests/test_views.py
 +++ b/apps/output/tests/test_views.py
-@@ -296,6 +296,76 @@ class OutputEPGXMLEscapingTest(OutputEndpointTestMixin, TestCase):
+@@ -296,6 +296,108 @@ class OutputEPGXMLEscapingTest(OutputEndpointTestMixin, TestCase):
          self.assertLess(content.find('<title>First</title>'), content.find('<title>Second</title>'))
          self.assertLess(content.find('<title>Second</title>'), content.find('<title>Third</title>'))
 
@@ -158,8 +167,8 @@ index 1fd6bb7..631bc70 100644
 +            epg=epg_data,
 +            start_time=now + timedelta(hours=1),
 +            end_time=now + timedelta(hours=2),
-+            title="Terra X",
-+            sub_title="Eisige Welten II - Planet der Extreme",
++            title="Documentary Series",
++            sub_title="Episode Without Number",
 +            tvg_id="date.station",
 +            custom_properties={
 +                "dd_progid": "EP01646084.0886",
@@ -175,7 +184,7 @@ index 1fd6bb7..631bc70 100644
 +        tree = ET.fromstring(content)
 +        programme = next(
 +            item for item in tree.findall(".//programme")
-+            if item.findtext("sub-title") == "Eisige Welten II - Planet der Extreme"
++            if item.findtext("sub-title") == "Episode Without Number"
 +        )
 +        episode_numbers = {
 +            item.get("system"): item.text for item in programme.findall("episode-num")
@@ -188,7 +197,7 @@ index 1fd6bb7..631bc70 100644
 +
 +        from core.models import CoreSettings, EPG_SETTINGS_KEY
 +
-+        CoreSettings.objects.create(
++        setting = CoreSettings.objects.create(
 +            key=EPG_SETTINGS_KEY,
 +            name="EPG Settings",
 +            value={"plex_epg_compatibility": True},
@@ -199,7 +208,7 @@ index 1fd6bb7..631bc70 100644
 +        compat_tree = ET.fromstring(compat_content)
 +        compat_programme = next(
 +            item for item in compat_tree.findall(".//programme")
-+            if item.findtext("sub-title") == "Eisige Welten II - Planet der Extreme"
++            if item.findtext("sub-title") == "Episode Without Number"
 +        )
 +        compat_numbers = {
 +            item.get("system"): item.text
@@ -208,9 +217,58 @@ index 1fd6bb7..631bc70 100644
 +        self.assertNotIn("dd_progid", compat_numbers)
 +        self.assertEqual(compat_numbers["original-air-date"], "2023-02-19")
 +
++        override_off_content = _response_text(
++            self.client.get(
++                self._epg_url(
++                    "tvg_id_source=tvg_id&days=1&date_episode_compatibility=false"
++                )
++            )
++        )
++        override_off_programme = next(
++            item for item in ET.fromstring(override_off_content).findall(".//programme")
++            if item.findtext("sub-title") == "Episode Without Number"
++        )
++        self.assertIsNotNone(
++            override_off_programme.find('episode-num[@system="dd_progid"]')
++        )
++
++        setting.value = {"plex_epg_compatibility": False}
++        setting.save()
++        override_on_content = _response_text(
++            self.client.get(
++                self._epg_url(
++                    "tvg_id_source=tvg_id&days=1&date_episode_compatibility=true"
++                )
++            )
++        )
++        override_on_programme = next(
++            item for item in ET.fromstring(override_on_content).findall(".//programme")
++            if item.findtext("sub-title") == "Episode Without Number"
++        )
++        self.assertIsNone(
++            override_on_programme.find('episode-num[@system="dd_progid"]')
++        )
++
      def test_override_epg_change_invalidates_xmltv_chunk_cache(self):
          """
          XC reads live ProgramData; XMLTV is chunk-cached. Changing the
+diff --git a/apps/output/views.py b/apps/output/views.py
+--- a/apps/output/views.py
++++ b/apps/output/views.py
+@@ -237,6 +237,12 @@ def get_m3u(request, profile_name=None, user=None):
+         epg_path = reverse('output:epg_endpoint', args=[profile_name]) if profile_name else reverse('output:epg_endpoint')
+         epg_base_url = f"{_base_url}{epg_path}"
+
+         # Optionally preserve certain query parameters
+-        preserved_params = ['tvg_id_source', 'cachedlogos', 'days', 'prev_days']
++        preserved_params = [
++            'tvg_id_source',
++            'cachedlogos',
++            'days',
++            'prev_days',
++            'date_episode_compatibility',
++        ]
+         query_params = {k: v for k, v in request.GET.items() if k in preserved_params}
 diff --git a/core/models.py b/core/models.py
 index 01793f2..044f251 100644
 --- a/core/models.py
@@ -394,3 +452,71 @@ index c3900f0..78d64e6 100644
      it('should save epg_match_mode to epg_settings group', async () => {
        const settings = {
          epg_settings: {
+diff --git a/frontend/src/components/tables/ChannelsTable.jsx b/frontend/src/components/tables/ChannelsTable.jsx
+--- a/frontend/src/components/tables/ChannelsTable.jsx
++++ b/frontend/src/components/tables/ChannelsTable.jsx
+@@ -399,6 +399,7 @@ const ChannelsTable = () => {
+   });
+   const [epgParams, setEpgParams] = useState({
+     cachedlogos: true,
++    date_episode_compatibility: false,
+     tvg_id_source: 'channel_number',
+     days: 0,
+     prev_days: 0,
+@@ -1492,6 +1493,18 @@ const ChannelsTable = () => {
+                         }))
+                       }
+                     />
++                    <Switch
++                      label="Date-based Episode Compatibility"
++                      description="Generate a client-specific URL that omits dd_progid for unnumbered programmes with an original air date. This helps clients such as Plex."
++                      size="sm"
++                      checked={epgParams.date_episode_compatibility}
++                      onChange={(event) =>
++                        setEpgParams((prev) => ({
++                          ...prev,
++                          date_episode_compatibility: event.target.checked,
++                        }))
++                      }
++                    />
+                     <Select
+                       label="TVG-ID Source"
+                       description="Value used to match EPG channels to M3U streams"
+diff --git a/frontend/src/utils/tables/ChannelsTableUtils.js b/frontend/src/utils/tables/ChannelsTableUtils.js
+--- a/frontend/src/utils/tables/ChannelsTableUtils.js
++++ b/frontend/src/utils/tables/ChannelsTableUtils.js
+@@ -181,6 +181,8 @@ export const buildM3UUrl = (m3uParams, m3uUrl) => {
+ export const buildEPGUrl = (epgParams, epgUrl) => {
+   const params = new URLSearchParams();
+   if (!epgParams.cachedlogos) params.append('cachedlogos', 'false');
++  if (epgParams.date_episode_compatibility)
++    params.append('date_episode_compatibility', 'true');
+   if (epgParams.tvg_id_source !== 'channel_number')
+     params.append('tvg_id_source', epgParams.tvg_id_source);
+   if (epgParams.days > 0) params.append('days', epgParams.days.toString());
+diff --git a/frontend/src/utils/tables/__tests__/ChannelsTableUtils.test.js b/frontend/src/utils/tables/__tests__/ChannelsTableUtils.test.js
+--- a/frontend/src/utils/tables/__tests__/ChannelsTableUtils.test.js
++++ b/frontend/src/utils/tables/__tests__/ChannelsTableUtils.test.js
+@@ -335,6 +335,7 @@ describe('ChannelsTableUtils', () => {
+     const baseUrl = 'http://localhost/output/epg';
+     const defaults = {
+       cachedlogos: true,
++      date_episode_compatibility: false,
+       tvg_id_source: 'channel_number',
+       days: 0,
+       prev_days: 0,
+@@ -352,6 +353,14 @@ describe('ChannelsTableUtils', () => {
+       expect(result).toContain('cachedlogos=false');
+     });
+
++    it('appends date episode compatibility when enabled', () => {
++      const result = ChannelsTableUtils.buildEPGUrl(
++        { ...defaults, date_episode_compatibility: true },
++        baseUrl
++      );
++      expect(result).toContain('date_episode_compatibility=true');
++    });
++
+     it('appends tvg_id_source when not channel_number', () => {
+       const result = ChannelsTableUtils.buildEPGUrl(
+         { ...defaults, tvg_id_source: 'gracenote' },

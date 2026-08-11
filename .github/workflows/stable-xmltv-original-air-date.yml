@@ -144,12 +144,15 @@ jobs:
           npx eslint
           src/components/forms/settings/DvrSettingsForm.jsx
           src/components/forms/settings/SystemSettingsForm.jsx
+          src/components/tables/ChannelsTable.jsx
           src/components/forms/settings/__tests__/DvrSettingsForm.test.jsx
           src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
           src/utils/forms/settings/SystemSettingsFormUtils.js
           src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
           src/utils/pages/SettingsUtils.js
           src/utils/pages/__tests__/SettingsUtils.test.js
+          src/utils/tables/ChannelsTableUtils.js
+          src/utils/tables/__tests__/ChannelsTableUtils.test.js
 
       - name: Check changed frontend formatting
         working-directory: upstream-src/frontend
@@ -157,12 +160,15 @@ jobs:
           npx prettier --check
           src/components/forms/settings/DvrSettingsForm.jsx
           src/components/forms/settings/SystemSettingsForm.jsx
+          src/components/tables/ChannelsTable.jsx
           src/components/forms/settings/__tests__/DvrSettingsForm.test.jsx
           src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
           src/utils/forms/settings/SystemSettingsFormUtils.js
           src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
           src/utils/pages/SettingsUtils.js
           src/utils/pages/__tests__/SettingsUtils.test.js
+          src/utils/tables/ChannelsTableUtils.js
+          src/utils/tables/__tests__/ChannelsTableUtils.test.js
 
       - name: Run focused frontend tests
         working-directory: upstream-src/frontend
@@ -172,6 +178,7 @@ jobs:
           src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
           src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
           src/utils/pages/__tests__/SettingsUtils.test.js
+          src/utils/tables/__tests__/ChannelsTableUtils.test.js
 
       - name: Set up QEMU
         if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
