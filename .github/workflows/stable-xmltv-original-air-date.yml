@@ -1,0 +1,197 @@
+name: Stable XMLTV Original Air Date Image
+
+on:
+  push:
+    branches: [agent/preserve-xmltv-original-air-date]
+    paths:
+      - 'patches/xmltv-original-air-date.patch'
+      - '.github/workflows/stable-xmltv-original-air-date.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'patches/xmltv-original-air-date.patch'
+      - '.github/workflows/stable-xmltv-original-air-date.yml'
+  schedule:
+    - cron: '47 3 * * *'
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: Rebuild even if this stable/patch candidate already exists
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: stable-xmltv-original-air-date-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork maintenance files
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Resolve latest stable release and candidate
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_JSON="$(gh api repos/Dispatcharr/Dispatcharr/releases/latest)"
+          UPSTREAM_TAG="$(jq -r '.tag_name' <<<"$RELEASE_JSON")"
+          DRAFT="$(jq -r '.draft' <<<"$RELEASE_JSON")"
+          PRERELEASE="$(jq -r '.prerelease' <<<"$RELEASE_JSON")"
+          if [ -z "$UPSTREAM_TAG" ] || [ "$UPSTREAM_TAG" = "null" ]; then
+            echo "Latest stable release did not provide a tag"
+            exit 1
+          fi
+          if [ "$DRAFT" != "false" ] || [ "$PRERELEASE" != "false" ]; then
+            echo "Latest release is not a stable non-draft release"
+            exit 1
+          fi
+
+          PATCH_SHA="$(sha256sum patches/xmltv-original-air-date.patch | cut -c1-12)"
+          CANDIDATE_TAG="candidate-${UPSTREAM_TAG}-${PATCH_SHA}"
+          CANDIDATE_URL="https://hub.docker.com/v2/repositories/nillivanilli0815/dispatcharr-xmltv-original-air-date/tags/${CANDIDATE_TAG}/"
+          CANDIDATE_EXISTS=false
+          if curl --fail --silent --show-error "$CANDIDATE_URL" >/dev/null; then
+            CANDIDATE_EXISTS=true
+          fi
+          SHOULD_PUBLISH=true
+          if [ "$CANDIDATE_EXISTS" = "true" ] && [ "$FORCE_REBUILD" != "true" ]; then
+            SHOULD_PUBLISH=false
+          fi
+
+          echo "tag=$UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
+          echo "patch_sha=$PATCH_SHA" >> "$GITHUB_OUTPUT"
+          echo "candidate_tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
+          echo "candidate_exists=$CANDIDATE_EXISTS" >> "$GITHUB_OUTPUT"
+          echo "should_publish=$SHOULD_PUBLISH" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact upstream stable tag
+        uses: actions/checkout@v6
+        with:
+          repository: Dispatcharr/Dispatcharr
+          ref: ${{ steps.release.outputs.tag }}
+          path: upstream-src
+          fetch-depth: 1
+
+      - name: Verify and apply XMLTV feature patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C upstream-src describe --tags --exact-match
+          git -C upstream-src apply --check ../patches/xmltv-original-air-date.patch
+          git -C upstream-src apply ../patches/xmltv-original-air-date.patch
+          git -C upstream-src diff --check
+
+      - name: Run focused backend tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/dispatcharr/dispatcharr:base
+          docker run --rm --entrypoint "" \
+            -v "${GITHUB_WORKSPACE}/upstream-src:/work" \
+            -w /work \
+            -e GITHUB_WORKSPACE=/work \
+            -e DISPATCHARR_ENV=aio \
+            -e DJANGO_SECRET_KEY=ci-test-secret-key \
+            -e POSTGRES_DB=dispatcharr \
+            -e POSTGRES_USER=dispatch \
+            -e POSTGRES_PASSWORD=secret \
+            -e DISPATCHARR_LOG_LEVEL=WARNING \
+            ghcr.io/dispatcharr/dispatcharr:base \
+            bash scripts/ci_bootstrap_backend.sh \
+              apps.epg.tests.test_extract_custom_properties \
+              apps.epg.tests.test_serializers \
+              apps.output.tests.test_views.OutputEPGXMLEscapingTest -v2
+
+      - name: Set up QEMU
+        if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Verify Docker Hub credentials
+        if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$DOCKERHUB_USERNAME" = "nillivanilli0815"
+          test -n "$DOCKERHUB_TOKEN"
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Select Docker tags
+        if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'value<<EOF'
+            echo 'docker.io/nillivanilli0815/dispatcharr-xmltv-original-air-date:latest'
+            echo "docker.io/nillivanilli0815/dispatcharr-xmltv-original-air-date:${{ steps.release.outputs.tag }}"
+            echo "docker.io/nillivanilli0815/dispatcharr-xmltv-original-air-date:${{ steps.release.outputs.candidate_tag }}"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish stable multi-arch image
+        if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: upstream-src
+          file: upstream-src/docker/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.tags.outputs.value }}
+          build-args: |
+            REPO_OWNER=dispatcharr
+            REPO_NAME=dispatcharr
+            BASE_TAG=base
+            BRANCH=${{ steps.release.outputs.tag }}
+            REPO_URL=https://github.com/Dispatcharr/Dispatcharr
+          cache-from: type=gha,scope=xmltv-original-air-date
+          cache-to: type=gha,mode=max,scope=xmltv-original-air-date
+
+      - name: Verify candidate multi-arch manifest
+        if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
+        env:
+          CANDIDATE_TAG: ${{ steps.release.outputs.candidate_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_URL="https://hub.docker.com/v2/repositories/nillivanilli0815/dispatcharr-xmltv-original-air-date/tags/${CANDIDATE_TAG}"
+          for attempt in $(seq 1 30); do
+            if MANIFEST_JSON="$(curl --fail --silent --show-error "$TAG_URL")"; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "Candidate tag did not become available: ${CANDIDATE_TAG}"
+              exit 1
+            fi
+            sleep 20
+          done
+          ARCHES="$(jq -r '.images[] | select(.os == "linux") | .architecture' <<<"$MANIFEST_JSON" | sort -u)"
+          grep -qx 'amd64' <<<"$ARCHES"
+          grep -qx 'arm64' <<<"$ARCHES"
