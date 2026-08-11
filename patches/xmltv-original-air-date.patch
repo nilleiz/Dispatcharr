@@ -277,7 +277,7 @@ index 2a8c9b7..42aa8a4 100644
          <>
            <Divider my="md" label="Connection Security" labelPosition="left" />
 diff --git a/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx b/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
-index 577141c..09e1c67 100644
+index 577141c..d33cd17 100644
 --- a/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
 +++ b/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
 @@ -116,6 +116,7 @@ const setupMocks = ({
@@ -301,6 +301,14 @@ index 577141c..09e1c67 100644
      it('does not show success alert on initial render', () => {
        setupMocks();
        render(<SystemSettingsForm active={true} />);
+@@ -296,6 +303,7 @@ describe('SystemSettingsForm', () => {
+         auto_import_mapped_files: true,
+         enable_ip_lookup: true,
+         catchup_enabled: true,
++        plex_epg_compatibility: false,
+       });
+     });
+
 diff --git a/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js b/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js
 index b2b4c18..8a7b0a1 100644
 --- a/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js
