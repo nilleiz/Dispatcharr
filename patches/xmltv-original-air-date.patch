@@ -77,19 +77,11 @@ index 7ce7716d..c4845f7c 100644
          program = self._create_program(
              custom_properties={
 diff --git a/apps/output/epg.py b/apps/output/epg.py
-index 03e947eb..f43ec52a 100644
+index 03e947eb..ee94563e 100644
 --- a/apps/output/epg.py
 +++ b/apps/output/epg.py
-@@ -1463,6 +1463,20 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
--                        if 'dd_progid' in custom_data:
-+                        has_season_episode = (
-+                            custom_data.get('season') is not None
-+                            and custom_data.get('episode') is not None
-+                        )
-+                        if (
-+                            'dd_progid' in custom_data
-+                            and ('original_air_date' not in custom_data or has_season_episode)
-+                        ):
+@@ -1466,6 +1466,13 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
+                         if 'dd_progid' in custom_data:
                              program_xml.append(f'    <episode-num system="dd_progid">{html.escape(custom_data["dd_progid"])}</episode-num>')
 
 +                        if 'original_air_date' in custom_data:
@@ -110,8 +102,8 @@ index 1fd6bb7b..34b07751 100644
          self.assertLess(content.find('<title>First</title>'), content.find('<title>Second</title>'))
          self.assertLess(content.find('<title>Second</title>'), content.find('<title>Third</title>'))
 
-+    def test_original_air_date_replaces_unstructured_dd_progid(self):
-+        """Prefer date identity when dd_progid would look like an episode number."""
++    def test_original_air_date_episode_number_is_exported(self):
++        """Date-based episode identity survives the XMLTV output round trip."""
 +        from django.utils import timezone
 +        from apps.epg.models import ProgramData
 +
@@ -152,7 +144,7 @@ index 1fd6bb7b..34b07751 100644
 +        episode_numbers = {
 +            item.get("system"): item.text for item in programme.findall("episode-num")
 +        }
-+        self.assertNotIn("dd_progid", episode_numbers)
++        self.assertEqual(episode_numbers["dd_progid"], "EP01646084.0886")
 +        self.assertEqual(episode_numbers["original-air-date"], "2023-02-19")
 +        self.assertEqual(
 +            programme.find("previously-shown").get("start"), "2023-02-19"
