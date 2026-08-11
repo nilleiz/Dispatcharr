@@ -266,8 +266,8 @@ index 2a8c9b7..42aa8a4 100644
        />
 +      <Divider my="md" label="EPG Output" labelPosition="left" />
 +      <Switch
-+        label="Plex EPG Compatibility"
-+        description="For unnumbered programmes with an original air date, omit dd_progid so Plex uses the date instead of inventing an episode number. Other XMLTV identifiers are unchanged."
++        label="Date-based Episode Compatibility"
++        description="For programmes with an original air date but no complete season and episode information, omit dd_progid. This helps clients such as Plex that otherwise interpret the programme ID as an episode number. Other XMLTV identifiers are unchanged."
 +        {...form.getInputProps('plex_epg_compatibility', {
 +          type: 'checkbox',
 +        })}
