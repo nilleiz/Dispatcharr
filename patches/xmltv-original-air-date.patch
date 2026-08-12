@@ -324,8 +324,8 @@ index 2a8c9b7..42aa8a4 100644
        />
 +      <Divider my="md" label="EPG Output" labelPosition="left" />
 +      <Switch
-+        label="Date-based Episode Compatibility"
-+        description="For programmes with an original air date but no complete season and episode information, omit dd_progid. This helps clients such as Plex that otherwise interpret the programme ID as an episode number. Other XMLTV identifiers are unchanged."
++        label="Use Air Date for Unnumbered Episodes"
++        description="Uses the original air date for programmes without SXXEXX definitions. Improves episode matching on some clients (e.g. Plex)."
 +        {...form.getInputProps('plex_epg_compatibility', {
 +          type: 'checkbox',
 +        })}
@@ -468,8 +468,8 @@ diff --git a/frontend/src/components/tables/ChannelsTable.jsx b/frontend/src/com
                        }
                      />
 +                    <Switch
-+                      label="Date-based Episode Compatibility"
-+                      description="Generate a client-specific URL that omits dd_progid for unnumbered programmes with an original air date. This helps clients such as Plex."
++                      label="Use Air Date for Unnumbered Episodes"
++                      description="Uses the original air date for programmes without SXXEXX definitions. Improves episode matching on some clients (e.g. Plex)."
 +                      size="sm"
 +                      checked={epgParams.date_episode_compatibility}
 +                      onChange={(event) =>
