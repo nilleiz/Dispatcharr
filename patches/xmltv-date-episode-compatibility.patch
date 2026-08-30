@@ -1,0 +1,611 @@
+diff --git a/apps/output/epg.py b/apps/output/epg.py
+index 617a77b0..40cf6224 100644
+--- a/apps/output/epg.py
++++ b/apps/output/epg.py
+@@ -25,6 +25,7 @@ from apps.output.dummy_epg import (
+     resolve_pattern_match_name,
+ )
+ from apps.output.streaming_chunk_cache import stream_cached_response
++from core.models import CoreSettings
+ from core.utils import build_absolute_uri_with_port, log_system_event
+ 
+ logger = logging.getLogger(__name__)
+@@ -64,12 +65,22 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
+             prev_days = 0
+     use_cached_logos = request.GET.get('cachedlogos', 'true').lower() != 'false'
+     tvg_id_source = request.GET.get('tvg_id_source', 'channel_number').lower()
++    compatibility_override = request.GET.get('date_episode_compatibility')
++    if compatibility_override is None:
++        date_episode_compatibility = CoreSettings.get_date_episode_compatibility()
++    else:
++        date_episode_compatibility = compatibility_override.lower() in (
++            '1',
++            'true',
++            'yes',
++            'on',
++        )
+ 
+     request_origin = build_absolute_uri_with_port(request, "")
+     cache_params = (
+         f"{profile_name or 'all'}:{user.username if user else 'anonymous'}"
+         f":d={num_days}:p={prev_days}:logos={use_cached_logos}:tvgid={tvg_id_source}"
+-        f":origin={request_origin}"
++        f":origin={request_origin}:date_episode={date_episode_compatibility}"
+     )
+     content_cache_key = f"epg_content:{cache_params}"
+ 
+@@ -379,10 +390,36 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
+                         elif "episode" in custom_data:
+                             program_xml.append(f'    <episode-num system="onscreen">E{custom_data["episode"]}</episode-num>')
+ 
++                        previously_shown_details = custom_data.get(
++                            'previously_shown_details'
++                        )
++                        original_air_date = ''
++                        if isinstance(previously_shown_details, dict):
++                            original_air_date = str(
++                                previously_shown_details.get('start') or ''
++                            ).strip()
++
++                        has_season_episode = (
++                            custom_data.get('season') is not None
++                            and custom_data.get('episode') is not None
++                        )
++                        suppress_dd_progid = (
++                            date_episode_compatibility
++                            and bool(original_air_date)
++                            and not has_season_episode
++                        )
++
+                         # Handle dd_progid format
+-                        if 'dd_progid' in custom_data:
++                        if 'dd_progid' in custom_data and not suppress_dd_progid:
+                             program_xml.append(f'    <episode-num system="dd_progid">{html.escape(custom_data["dd_progid"])}</episode-num>')
+ 
++                        if original_air_date:
++                            program_xml.append(
++                                '    <episode-num system="original-air-date">'
++                                f'{html.escape(original_air_date)}'
++                                '</episode-num>'
++                            )
++
+                         # Handle external database IDs
+                         for system in ['thetvdb.com', 'themoviedb.org', 'imdb.com']:
+                             if f'{system}_id' in custom_data:
+diff --git a/apps/output/tests/test_views.py b/apps/output/tests/test_views.py
+index a56ccaf8..bb911d44 100644
+--- a/apps/output/tests/test_views.py
++++ b/apps/output/tests/test_views.py
+@@ -148,6 +148,14 @@ class OutputM3UTest(OutputEndpointTestMixin, TestCase):
+         self.assertEqual(response.status_code, 403, "POST with body should return 403 Forbidden")
+         self.assertIn("POST requests with body are not allowed", _response_text(response))
+ 
++    def test_generated_epg_url_preserves_date_episode_compatibility(self):
++        response = self.client.get(
++            f"{self._m3u_url()}?date_episode_compatibility=true"
++        )
++
++        content = _response_text(response)
++        self.assertIn("date_episode_compatibility=true", content)
++
+ 
+ class OutputEPGXMLEscapingTest(OutputEndpointTestMixin, TestCase):
+     """Test XML escaping of channel_id attributes in EPG generation"""
+@@ -305,6 +313,157 @@ class OutputEPGXMLEscapingTest(OutputEndpointTestMixin, TestCase):
+         self.assertLess(content.find('<title>First</title>'), content.find('<title>Second</title>'))
+         self.assertLess(content.find('<title>Second</title>'), content.find('<title>Third</title>'))
+ 
++    def _create_date_episode(self, sub_title, custom_properties):
++        from django.utils import timezone
++        from apps.epg.models import ProgramData
++
++        epg_source = EPGSource.objects.create(
++            name=f"Date EPG {sub_title}", source_type="xmltv"
++        )
++        epg_data = EPGData.objects.create(
++            name=f"Date Station {sub_title}",
++            epg_source=epg_source,
++            tvg_id=f"date.station.{uuid4().hex}",
++        )
++        self._add_channel(
++            channel_number=150.0,
++            name=f"Date Channel {sub_title}",
++            tvg_id=epg_data.tvg_id,
++            epg_data=epg_data,
++        )
++        now = timezone.now()
++        ProgramData.objects.create(
++            epg=epg_data,
++            start_time=now + timedelta(hours=1),
++            end_time=now + timedelta(hours=2),
++            title="Documentary Series",
++            sub_title=sub_title,
++            tvg_id=epg_data.tvg_id,
++            custom_properties=custom_properties,
++        )
++
++    def _episode_numbers(self, content, sub_title):
++        tree = ET.fromstring(content)
++        programme = next(
++            item
++            for item in tree.findall(".//programme")
++            if item.findtext("sub-title") == sub_title
++        )
++        return {
++            item.get("system"): item.text
++            for item in programme.findall("episode-num")
++        }
++
++    def test_original_air_date_is_exported_without_changing_default_ids(self):
++        self._create_date_episode(
++            "Episode Without Number",
++            {
++                "dd_progid": "EP01646084.0886",
++                "imdb.com_id": "tt1234567",
++                "previously_shown": True,
++                "previously_shown_details": {"start": "2023-02-19"},
++            },
++        )
++
++        content = _response_text(
++            self.client.get(self._epg_url("tvg_id_source=tvg_id&days=1"))
++        )
++        numbers = self._episode_numbers(content, "Episode Without Number")
++
++        self.assertEqual(numbers["dd_progid"], "EP01646084.0886")
++        self.assertEqual(numbers["original-air-date"], "2023-02-19")
++        self.assertEqual(numbers["imdb.com"], "tt1234567")
++
++    def test_global_date_compatibility_only_suppresses_unnumbered_dd_progid(self):
++        from core.models import CoreSettings, EPG_SETTINGS_KEY
++
++        CoreSettings.objects.create(
++            key=EPG_SETTINGS_KEY,
++            name="EPG Settings",
++            value={"date_episode_compatibility": True},
++        )
++        self._create_date_episode(
++            "Episode Without Number",
++            {
++                "dd_progid": "EP01646084.0886",
++                "imdb.com_id": "tt1234567",
++                "previously_shown_details": {"start": "2023-02-19"},
++            },
++        )
++        self._create_date_episode(
++            "Numbered Episode",
++            {
++                "dd_progid": "EP01646084.0887",
++                "season": 2,
++                "episode": 4,
++                "previously_shown_details": {"start": "2023-02-26"},
++            },
++        )
++        self._create_date_episode(
++            "Episode Without Air Date",
++            {"dd_progid": "EP01646084.0888"},
++        )
++
++        content = _response_text(
++            self.client.get(self._epg_url("tvg_id_source=tvg_id&days=1"))
++        )
++
++        unnumbered = self._episode_numbers(content, "Episode Without Number")
++        self.assertNotIn("dd_progid", unnumbered)
++        self.assertEqual(unnumbered["original-air-date"], "2023-02-19")
++        self.assertEqual(unnumbered["imdb.com"], "tt1234567")
++
++        numbered = self._episode_numbers(content, "Numbered Episode")
++        self.assertEqual(numbered["dd_progid"], "EP01646084.0887")
++        self.assertEqual(numbered["xmltv_ns"], "1.3.")
++
++        undated = self._episode_numbers(content, "Episode Without Air Date")
++        self.assertEqual(undated["dd_progid"], "EP01646084.0888")
++
++    def test_url_date_compatibility_overrides_global_setting(self):
++        from core.models import CoreSettings, EPG_SETTINGS_KEY
++
++        setting = CoreSettings.objects.create(
++            key=EPG_SETTINGS_KEY,
++            name="EPG Settings",
++            value={"date_episode_compatibility": True},
++        )
++        self._create_date_episode(
++            "Episode Without Number",
++            {
++                "dd_progid": "EP01646084.0886",
++                "previously_shown_details": {"start": "2023-02-19"},
++            },
++        )
++
++        override_off = _response_text(
++            self.client.get(
++                self._epg_url(
++                    "tvg_id_source=tvg_id&days=1&date_episode_compatibility=false"
++                )
++            )
++        )
++        self.assertEqual(
++            self._episode_numbers(override_off, "Episode Without Number")[
++                "dd_progid"
++            ],
++            "EP01646084.0886",
++        )
++
++        setting.value = {"date_episode_compatibility": False}
++        setting.save()
++        override_on = _response_text(
++            self.client.get(
++                self._epg_url(
++                    "tvg_id_source=tvg_id&days=1&date_episode_compatibility=true"
++                )
++            )
++        )
++        self.assertNotIn(
++            "dd_progid",
++            self._episode_numbers(override_on, "Episode Without Number"),
++        )
++
+     def test_override_epg_change_invalidates_xmltv_chunk_cache(self):
+         """
+         XC reads live ProgramData; XMLTV is chunk-cached. Changing the
+diff --git a/apps/output/views.py b/apps/output/views.py
+index 3f0f914c..ac7f5a45 100644
+--- a/apps/output/views.py
++++ b/apps/output/views.py
+@@ -240,7 +240,13 @@ def generate_m3u(request, profile_name=None, user=None):
+         epg_base_url = f"{_base_url}{epg_path}"
+ 
+         # Optionally preserve certain query parameters
+-        preserved_params = ['tvg_id_source', 'cachedlogos', 'days', 'prev_days']
++        preserved_params = [
++            'tvg_id_source',
++            'cachedlogos',
++            'days',
++            'prev_days',
++            'date_episode_compatibility',
++        ]
+         query_params = {k: v for k, v in request.GET.items() if k in preserved_params}
+         if query_params:
+             epg_url = f"{epg_base_url}?{urlencode(query_params)}"
+diff --git a/core/models.py b/core/models.py
+index 01793f20..e2e53072 100644
+--- a/core/models.py
++++ b/core/models.py
+@@ -588,8 +588,14 @@ class CoreSettings(models.Model):
+             "epg_match_ignore_prefixes": [],
+             "epg_match_ignore_suffixes": [],
+             "epg_match_ignore_custom": [],
++            "date_episode_compatibility": False,
+         })
+ 
++    @classmethod
++    def get_date_episode_compatibility(cls):
++        """Whether unnumbered XMLTV episodes should prefer original air date."""
++        return cls.get_epg_settings().get("date_episode_compatibility") is True
++
+     @classmethod
+     def _safe_string_list(cls, value):
+         """Return a list of strings, filtering out non-list or non-string values."""
+diff --git a/core/tests/test_core.py b/core/tests/test_core.py
+index 6ece81b2..aa099a0b 100644
+--- a/core/tests/test_core.py
++++ b/core/tests/test_core.py
+@@ -663,6 +663,28 @@ class EpgIgnoreListsTest(TestCase):
+             self.assertEqual(getter(), [])
+ 
+ 
++class DateEpisodeCompatibilityTest(TestCase):
++    def test_disabled_by_default(self):
++        self.assertFalse(CoreSettings.get_date_episode_compatibility())
++
++    def test_only_literal_true_enables_compatibility(self):
++        setting, _ = CoreSettings.objects.get_or_create(
++            key=EPG_SETTINGS_KEY,
++            defaults={"name": "EPG Settings", "value": {}},
++        )
++        for value, expected in [
++            (True, True),
++            (False, False),
++            ("true", False),
++            (1, False),
++        ]:
++            setting.value = {"date_episode_compatibility": value}
++            setting.save()
++            self.assertEqual(
++                CoreSettings.get_date_episode_compatibility(), expected
++            )
++
++
+ class DropDBCommandTlsTest(TestCase):
+     """Verify dropdb management command passes TLS parameters to psycopg."""
+     databases = []
+diff --git a/frontend/src/components/forms/settings/SystemSettingsForm.jsx b/frontend/src/components/forms/settings/SystemSettingsForm.jsx
+index 2a8c9b75..b748ad65 100644
+--- a/frontend/src/components/forms/settings/SystemSettingsForm.jsx
++++ b/frontend/src/components/forms/settings/SystemSettingsForm.jsx
+@@ -115,6 +115,15 @@ const SystemSettingsForm = React.memo(({ active }) => {
+         {...form.getInputProps('catchup_enabled', { type: 'checkbox' })}
+         id="catchup_enabled"
+       />
++      <Divider my="md" label="EPG Output" labelPosition="left" />
++      <Switch
++        label="Use Air Date for Unnumbered Episodes"
++        description="Uses the original air date for programmes without SXXEXX definitions. Improves episode matching on some clients (e.g. Plex)."
++        {...form.getInputProps('date_episode_compatibility', {
++          type: 'checkbox',
++        })}
++        id="date_episode_compatibility"
++      />
+       {isModular && (
+         <>
+           <Divider my="md" label="Connection Security" labelPosition="left" />
+diff --git a/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx b/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+index 577141cb..f9cdb8b2 100644
+--- a/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
++++ b/frontend/src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+@@ -74,8 +74,12 @@ vi.mock('@mantine/core', () => ({
+       </select>
+     </div>
+   ),
+-  Switch: ({ id }) => (
+-    <input data-testid={id} id={id} type="checkbox" onChange={() => {}} />
++  Switch: ({ id, label, description }) => (
++    <div>
++      <label htmlFor={id}>{label}</label>
++      {description && <p>{description}</p>}
++      <input data-testid={id} id={id} type="checkbox" onChange={() => {}} />
++    </div>
+   ),
+   Text: ({ children }) => <span>{children}</span>,
+   Divider: () => <hr />,
+@@ -116,6 +120,7 @@ const setupMocks = ({
+     auto_import_mapped_files: true,
+     enable_ip_lookup: true,
+     catchup_enabled: true,
++    date_episode_compatibility: false,
+   };
+ 
+   const formMock = {
+@@ -215,6 +220,22 @@ describe('SystemSettingsForm', () => {
+       expect(screen.getByTestId('catchup_enabled')).toBeInTheDocument();
+     });
+ 
++    it('renders the date episode compatibility switch', () => {
++      setupMocks();
++      render(<SystemSettingsForm active={true} />);
++      expect(
++        screen.getByTestId('date_episode_compatibility')
++      ).toBeInTheDocument();
++      expect(
++        screen.getByText('Use Air Date for Unnumbered Episodes')
++      ).toBeInTheDocument();
++      expect(
++        screen.getByText(
++          'Uses the original air date for programmes without SXXEXX definitions. Improves episode matching on some clients (e.g. Plex).'
++        )
++      ).toBeInTheDocument();
++    });
++
+     it('does not show success alert on initial render', () => {
+       setupMocks();
+       render(<SystemSettingsForm active={true} />);
+@@ -296,6 +317,7 @@ describe('SystemSettingsForm', () => {
+         auto_import_mapped_files: true,
+         enable_ip_lookup: true,
+         catchup_enabled: true,
++        date_episode_compatibility: false,
+       });
+     });
+ 
+diff --git a/frontend/src/components/tables/ChannelsTable.jsx b/frontend/src/components/tables/ChannelsTable.jsx
+index 3af2da9b..2968bc17 100644
+--- a/frontend/src/components/tables/ChannelsTable.jsx
++++ b/frontend/src/components/tables/ChannelsTable.jsx
+@@ -487,6 +487,7 @@ const ChannelsTable = ({ onReady }) => {
+     tvg_id_source: 'channel_number',
+     days: 0,
+     prev_days: 0,
++    date_episode_compatibility: false,
+   });
+ 
+   /**
+@@ -1631,6 +1632,18 @@ const ChannelsTable = ({ onReady }) => {
+                         }))
+                       }
+                     />
++                    <Switch
++                      label="Use Air Date for Unnumbered Episodes"
++                      description="Uses the original air date for programmes without SXXEXX definitions. Improves episode matching on some clients (e.g. Plex)."
++                      size="sm"
++                      checked={epgParams.date_episode_compatibility}
++                      onChange={(event) =>
++                        setEpgParams((prev) => ({
++                          ...prev,
++                          date_episode_compatibility: event.target.checked,
++                        }))
++                      }
++                    />
+                     <Select
+                       label="TVG-ID Source"
+                       description="Value used to match EPG channels to M3U streams"
+diff --git a/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js b/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js
+index b2b4c187..b75857e3 100644
+--- a/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js
++++ b/frontend/src/utils/forms/settings/SystemSettingsFormUtils.js
+@@ -5,5 +5,6 @@ export const getSystemSettingsFormInitialValues = () => {
+     auto_import_mapped_files: true,
+     enable_ip_lookup: true,
+     catchup_enabled: true,
++    date_episode_compatibility: false,
+   };
+ };
+diff --git a/frontend/src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js b/frontend/src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
+index a160cd21..e7bdf1ad 100644
+--- a/frontend/src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
++++ b/frontend/src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
+@@ -13,6 +13,7 @@ describe('SystemSettingsFormUtils', () => {
+         auto_import_mapped_files: true,
+         enable_ip_lookup: true,
+         catchup_enabled: true,
++        date_episode_compatibility: false,
+       });
+     });
+ 
+@@ -41,6 +42,7 @@ describe('SystemSettingsFormUtils', () => {
+       expect(result).toHaveProperty('max_system_events');
+       expect(result).toHaveProperty('preferred_region');
+       expect(result).toHaveProperty('auto_import_mapped_files');
++      expect(result).toHaveProperty('date_episode_compatibility', false);
+     });
+   });
+ });
+diff --git a/frontend/src/utils/pages/SettingsUtils.js b/frontend/src/utils/pages/SettingsUtils.js
+index 03a16f15..7305568d 100644
+--- a/frontend/src/utils/pages/SettingsUtils.js
++++ b/frontend/src/utils/pages/SettingsUtils.js
+@@ -39,6 +39,7 @@ export const saveChangedSettings = async (settings, changedSettings) => {
+     'epg_match_ignore_prefixes',
+     'epg_match_ignore_suffixes',
+     'epg_match_ignore_custom',
++    'date_episode_compatibility',
+   ];
+   const dvrFields = [
+     'tv_template',
+@@ -137,6 +138,7 @@ export const saveChangedSettings = async (settings, changedSettings) => {
+       'auto_import_mapped_files',
+       'enable_ip_lookup',
+       'catchup_enabled',
++      'date_episode_compatibility',
+     ];
+     if (booleanFields.includes(formKey) && value != null) {
+       if (typeof value === 'boolean') {
+@@ -305,6 +307,8 @@ export const parseSettings = (settings) => {
+     epgSettings && Array.isArray(epgSettings.epg_match_ignore_custom)
+       ? epgSettings.epg_match_ignore_custom
+       : [];
++  parsed.date_episode_compatibility =
++    epgSettings?.date_episode_compatibility === true;
+ 
+   // DVR settings - direct mapping with underscore keys
+   const dvrSettings = settings['dvr_settings']?.value;
+diff --git a/frontend/src/utils/pages/__tests__/SettingsUtils.test.js b/frontend/src/utils/pages/__tests__/SettingsUtils.test.js
+index c3900f02..3270cb1b 100644
+--- a/frontend/src/utils/pages/__tests__/SettingsUtils.test.js
++++ b/frontend/src/utils/pages/__tests__/SettingsUtils.test.js
+@@ -329,6 +329,13 @@ describe('SettingsUtils', () => {
+             auto_import_mapped_files: true,
+           },
+         },
++        epg_settings: {
++          id: 4,
++          key: 'epg_settings',
++          value: {
++            date_episode_compatibility: true,
++          },
++        },
+         dvr_settings: {
+           id: 2,
+           key: 'dvr_settings',
+@@ -350,6 +357,7 @@ describe('SettingsUtils', () => {
+       expect(result.preferred_region).toBe('US');
+       expect(result.auto_import_mapped_files).toBe(true);
+       expect(result.catchup_enabled).toBe(true);
++      expect(result.date_episode_compatibility).toBe(true);
+ 
+       // Check DVR settings
+       expect(result.tv_template).toBe('/media/tv/{show}/{season}/');
+@@ -373,6 +381,12 @@ describe('SettingsUtils', () => {
+       expect(result.m3u_hash_key).toEqual([]);
+     });
+ 
++    it('should default date episode compatibility to false', () => {
++      expect(SettingsUtils.parseSettings({}).date_episode_compatibility).toBe(
++        false
++      );
++    });
++
+     it('should handle proxy_settings', () => {
+       const mockSettings = {
+         proxy_settings: {
+@@ -588,6 +602,23 @@ describe('SettingsUtils', () => {
+   });
+ 
+   describe('saveChangedSettings - EPG Mode', () => {
++    it('should save date episode compatibility to epg_settings', async () => {
++      const settings = {};
++      const changedSettings = {
++        date_episode_compatibility: true,
++      };
++
++      API.createSetting.mockResolvedValue({});
++
++      await SettingsUtils.saveChangedSettings(settings, changedSettings);
++
++      expect(API.createSetting).toHaveBeenCalledWith({
++        key: 'epg_settings',
++        name: 'Epg Settings',
++        value: { date_episode_compatibility: true },
++      });
++    });
++
+     it('should save epg_match_mode to epg_settings group', async () => {
+       const settings = {
+         epg_settings: {
+diff --git a/frontend/src/utils/tables/ChannelsTableUtils.js b/frontend/src/utils/tables/ChannelsTableUtils.js
+index 22e05aed..50b88508 100644
+--- a/frontend/src/utils/tables/ChannelsTableUtils.js
++++ b/frontend/src/utils/tables/ChannelsTableUtils.js
+@@ -187,6 +187,8 @@ export const buildEPGUrl = (epgParams, epgUrl) => {
+   if (epgParams.days > 0) params.append('days', epgParams.days.toString());
+   if (epgParams.prev_days > 0)
+     params.append('prev_days', epgParams.prev_days.toString());
++  if (epgParams.date_episode_compatibility)
++    params.append('date_episode_compatibility', 'true');
+ 
+   const baseUrl = epgUrl;
+   return params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+diff --git a/frontend/src/utils/tables/__tests__/ChannelsTableUtils.test.js b/frontend/src/utils/tables/__tests__/ChannelsTableUtils.test.js
+index 04496c03..a38e3507 100644
+--- a/frontend/src/utils/tables/__tests__/ChannelsTableUtils.test.js
++++ b/frontend/src/utils/tables/__tests__/ChannelsTableUtils.test.js
+@@ -6,7 +6,14 @@ vi.mock('../../forms/ChannelUtils.js', () => ({
+   normalizeFieldValue: vi.fn((field, value) => {
+     if (value === '' || value === null || value === undefined) return null;
+     if (field === 'channel_number') return parseFloat(value);
+-    if (['channel_group_id', 'logo_id', 'epg_data_id', 'stream_profile_id'].includes(field)) {
++    if (
++      [
++        'channel_group_id',
++        'logo_id',
++        'epg_data_id',
++        'stream_profile_id',
++      ].includes(field)
++    ) {
+       return parseInt(value, 10);
+     }
+     return value;
+@@ -338,6 +345,7 @@ describe('ChannelsTableUtils', () => {
+       tvg_id_source: 'channel_number',
+       days: 0,
+       prev_days: 0,
++      date_episode_compatibility: false,
+     };
+ 
+     it('returns base URL with no params when all defaults', () => {
+@@ -380,6 +388,14 @@ describe('ChannelsTableUtils', () => {
+       );
+       expect(result).toContain('prev_days=3');
+     });
++
++    it('appends date episode compatibility when enabled', () => {
++      const result = ChannelsTableUtils.buildEPGUrl(
++        { ...defaults, date_episode_compatibility: true },
++        baseUrl
++      );
++      expect(result).toContain('date_episode_compatibility=true');
++    });
+   });
+ 
+   // ── buildHDHRUrl ────────────────────────────────────────────────────────────
+

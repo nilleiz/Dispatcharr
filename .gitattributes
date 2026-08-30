@@ -13,6 +13,9 @@
 *.bat text eol=crlf
 *.sh text eol=lf
 
+# Unified diff files encode empty context lines with a leading space.
+patches/*.patch whitespace=-trailing-space
+
 # Denote all files that are truly binary and should not be modified
 *.png binary
 *.jpg binary
