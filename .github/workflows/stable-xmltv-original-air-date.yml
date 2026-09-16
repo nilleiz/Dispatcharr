@@ -5,20 +5,18 @@ on:
     branches:
       - main
     paths:
-      - 'patches/xmltv-date-episode-compatibility.patch'
       - '.github/workflows/stable-xmltv-original-air-date.yml'
   pull_request:
     branches:
       - main
     paths:
-      - 'patches/xmltv-date-episode-compatibility.patch'
       - '.github/workflows/stable-xmltv-original-air-date.yml'
   schedule:
     - cron: '47 3 * * *'
   workflow_dispatch:
     inputs:
       force_rebuild:
-        description: Rebuild even if this stable/patch candidate already exists
+        description: Rebuild even if this stable/feature candidate already exists
         required: false
         default: false
         type: boolean
@@ -45,6 +43,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
+          FEATURE_REPOSITORY: nilleiz/Dispatcharr
+          FEATURE_REF: feature/epg-air-date-compatibility
         shell: bash
         run: |
           set -euo pipefail
@@ -61,8 +61,17 @@ jobs:
             exit 1
           fi
 
-          PATCH_SHA="$(sha256sum patches/xmltv-date-episode-compatibility.patch | cut -c1-12)"
-          CANDIDATE_TAG="candidate-${UPSTREAM_TAG}-${PATCH_SHA}"
+          FEATURE_SHA="$(
+            git ls-remote "https://github.com/${FEATURE_REPOSITORY}.git" \
+              "refs/heads/${FEATURE_REF}" | awk 'NR == 1 { print $1 }'
+          )"
+          if ! grep -Eq '^[0-9a-f]{40}$' <<<"$FEATURE_SHA"; then
+            echo "Could not resolve ${FEATURE_REPOSITORY}:${FEATURE_REF}"
+            exit 1
+          fi
+
+          FEATURE_SHORT_SHA="${FEATURE_SHA:0:12}"
+          CANDIDATE_TAG="candidate-${UPSTREAM_TAG}-${FEATURE_SHORT_SHA}"
           CANDIDATE_URL="https://hub.docker.com/v2/repositories/nillivanilli0815/dispatcharr-xmltv-original-air-date/tags/${CANDIDATE_TAG}/"
           CANDIDATE_EXISTS=false
           if curl --fail --silent --show-error "$CANDIDATE_URL" >/dev/null; then
@@ -74,7 +83,7 @@ jobs:
           fi
 
           echo "tag=$UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
-          echo "patch_sha=$PATCH_SHA" >> "$GITHUB_OUTPUT"
+          echo "feature_sha=$FEATURE_SHA" >> "$GITHUB_OUTPUT"
           echo "candidate_tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
           echo "candidate_exists=$CANDIDATE_EXISTS" >> "$GITHUB_OUTPUT"
           echo "should_publish=$SHOULD_PUBLISH" >> "$GITHUB_OUTPUT"
@@ -85,15 +94,45 @@ jobs:
           repository: Dispatcharr/Dispatcharr
           ref: ${{ steps.release.outputs.tag }}
           path: upstream-src
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Verify and apply XMLTV compatibility patch
+      - name: Integrate exact XMLTV compatibility feature commit
+        id: integration
+        env:
+          FEATURE_SHA: ${{ steps.release.outputs.feature_sha }}
+          FEATURE_REF: feature/epg-air-date-compatibility
         shell: bash
         run: |
           set -euo pipefail
           git -C upstream-src describe --tags --exact-match
-          git -C upstream-src apply --check ../patches/xmltv-date-episode-compatibility.patch
-          git -C upstream-src apply ../patches/xmltv-date-episode-compatibility.patch
+
+          git -C upstream-src fetch --no-tags \
+            https://github.com/nilleiz/Dispatcharr.git \
+            "refs/heads/${FEATURE_REF}"
+          FETCHED_SHA="$(git -C upstream-src rev-parse FETCH_HEAD)"
+          test "$FETCHED_SHA" = "$FEATURE_SHA"
+
+          FEATURE_PARENT="$(git -C upstream-src rev-parse "${FEATURE_SHA}^")"
+          PATCH_STATE="$(
+            git -C upstream-src cherry HEAD "$FEATURE_SHA" "$FEATURE_PARENT"
+          )"
+          case "$PATCH_STATE" in
+            ""|"- $FEATURE_SHA")
+              echo "Feature patch is already present upstream"
+              echo "source=upstream" >> "$GITHUB_OUTPUT"
+              ;;
+            "+ $FEATURE_SHA")
+              if ! git -C upstream-src cherry-pick --no-commit "$FEATURE_SHA"; then
+                echo "::error::The XMLTV compatibility feature no longer applies cleanly to ${{ steps.release.outputs.tag }}. Rebase feature/epg-air-date-compatibility onto current upstream/dev."
+                exit 1
+              fi
+              echo "source=feature-commit" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unexpected patch-equivalence result: $PATCH_STATE"
+              exit 1
+              ;;
+          esac
           git -C upstream-src diff --check
 
       - name: Run focused backend tests
@@ -135,7 +174,7 @@ jobs:
           npx eslint
           src/components/forms/settings/SystemSettingsForm.jsx
           src/components/tables/ChannelsTable.jsx
-          src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+          src/components/forms/settings/__tests__/SystemSettingsDateEpisodeCompatibility.test.jsx
           src/utils/forms/settings/SystemSettingsFormUtils.js
           src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
           src/utils/pages/SettingsUtils.js
@@ -149,7 +188,7 @@ jobs:
           npx prettier --check
           src/components/forms/settings/SystemSettingsForm.jsx
           src/components/tables/ChannelsTable.jsx
-          src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+          src/components/forms/settings/__tests__/SystemSettingsDateEpisodeCompatibility.test.jsx
           src/utils/forms/settings/SystemSettingsFormUtils.js
           src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
           src/utils/pages/SettingsUtils.js
@@ -161,7 +200,7 @@ jobs:
         working-directory: upstream-src/frontend
         run: >-
           npm test --
-          src/components/forms/settings/__tests__/SystemSettingsForm.test.jsx
+          src/components/forms/settings/__tests__/SystemSettingsDateEpisodeCompatibility.test.jsx
           src/utils/forms/settings/__tests__/SystemSettingsFormUtils.test.js
           src/utils/pages/__tests__/SettingsUtils.test.js
           src/utils/tables/__tests__/ChannelsTableUtils.test.js
@@ -171,7 +210,7 @@ jobs:
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
+        if: github.event_name == 'pull_request' || steps.release.outputs.should_publish == 'true'
         uses: docker/setup-buildx-action@v4
 
       - name: Verify Docker Hub credentials
@@ -207,15 +246,15 @@ jobs:
             echo EOF
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and publish stable multi-arch image
-        if: github.event_name != 'pull_request' && steps.release.outputs.should_publish == 'true'
+      - name: Build and optionally publish stable image
+        if: github.event_name == 'pull_request' || steps.release.outputs.should_publish == 'true'
         uses: docker/build-push-action@v7
         with:
           context: upstream-src
           file: upstream-src/docker/Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.tags.outputs.value }}
+          push: ${{ github.event_name != 'pull_request' }}
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          tags: ${{ github.event_name == 'pull_request' && 'dispatcharr-xmltv-original-air-date:validation' || steps.tags.outputs.value }}
           build-args: |
             REPO_OWNER=dispatcharr
             REPO_NAME=dispatcharr
