@@ -645,7 +645,13 @@ class CoreSettings(models.Model):
             "epg_match_ignore_prefixes": [],
             "epg_match_ignore_suffixes": [],
             "epg_match_ignore_custom": [],
+            "date_episode_compatibility": False,
         })
+
+    @classmethod
+    def get_date_episode_compatibility(cls):
+        """Whether unnumbered XMLTV episodes should prefer original air date."""
+        return cls.get_epg_settings().get("date_episode_compatibility") is True
 
     @classmethod
     def _safe_string_list(cls, value):

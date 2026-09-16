@@ -22,6 +22,15 @@ import { getSystemSettingsFormInitialValues } from '../../../utils/forms/setting
 import { REGION_CHOICES } from '../../../constants.js';
 
 const SYSTEM_GROUP = 'system_settings';
+const EPG_GROUP = 'epg_settings';
+
+const parseFormSettings = (settings) => {
+  const epgSettings = parseGroupSettings(settings, EPG_GROUP);
+  return {
+    ...parseGroupSettings(settings, SYSTEM_GROUP),
+    date_episode_compatibility: epgSettings.date_episode_compatibility,
+  };
+};
 
 const SystemSettingsForm = React.memo(({ active }) => {
   const settings = useSettingsStore((s) => s.settings);
@@ -45,25 +54,38 @@ const SystemSettingsForm = React.memo(({ active }) => {
 
   useEffect(() => {
     if (settings && !isSavingRef.current) {
-      form.setValues(parseGroupSettings(settings, SYSTEM_GROUP));
+      form.setValues(parseFormSettings(settings));
     }
   }, [settings]);
 
   const onSubmit = async () => {
     setSaved(false);
 
-    const changedSettings = getChangedGroupSettings(
-      form.getValues(),
+    const values = form.getValues();
+    const changedSystemSettings = getChangedGroupSettings(
+      values,
       settings,
       SYSTEM_GROUP
     );
+    const changedEpgSettings = getChangedGroupSettings(
+      values,
+      settings,
+      EPG_GROUP
+    );
+
+    const saveIfChanged = async (group, changes) => {
+      if (Object.keys(changes).length > 0) {
+        await saveGroupSettings(settings, group, changes);
+      }
+    };
 
     try {
       await runSave(async () => {
-        await saveGroupSettings(settings, SYSTEM_GROUP, changedSettings);
+        await saveIfChanged(SYSTEM_GROUP, changedSystemSettings);
+        await saveIfChanged(EPG_GROUP, changedEpgSettings);
         const latestSettings = useSettingsStore.getState().settings;
         if (latestSettings) {
-          form.setValues(parseGroupSettings(latestSettings, SYSTEM_GROUP));
+          form.setValues(parseFormSettings(latestSettings));
         }
         setSaved(true);
       });
@@ -154,6 +176,15 @@ const SystemSettingsForm = React.memo(({ active }) => {
         description="When disabled, timeshift and catchup endpoints are blocked for all users, and channels are not advertised as supporting catchup to clients. Catchup capability is still shown in the web UI."
         {...form.getInputProps('catchup_enabled', { type: 'checkbox' })}
         id="catchup_enabled"
+      />
+      <Divider my="md" label="EPG Output" labelPosition="left" />
+      <Switch
+        label="Use Air Date for Unnumbered Episodes"
+        description="Uses the original air date for programmes without SXXEXX definitions. Improves episode matching on some clients (e.g. Plex)."
+        {...form.getInputProps('date_episode_compatibility', {
+          type: 'checkbox',
+        })}
+        id="date_episode_compatibility"
       />
       {isModular && (
         <>

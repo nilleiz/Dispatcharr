@@ -663,6 +663,28 @@ class EpgIgnoreListsTest(TestCase):
             self.assertEqual(getter(), [])
 
 
+class DateEpisodeCompatibilityTest(TestCase):
+    def test_disabled_by_default(self):
+        self.assertFalse(CoreSettings.get_date_episode_compatibility())
+
+    def test_only_literal_true_enables_compatibility(self):
+        setting, _ = CoreSettings.objects.get_or_create(
+            key=EPG_SETTINGS_KEY,
+            defaults={"name": "EPG Settings", "value": {}},
+        )
+        for value, expected in [
+            (True, True),
+            (False, False),
+            ("true", False),
+            (1, False),
+        ]:
+            setting.value = {"date_episode_compatibility": value}
+            setting.save()
+            self.assertEqual(
+                CoreSettings.get_date_episode_compatibility(), expected
+            )
+
+
 class DropDBCommandTlsTest(TestCase):
     """Verify dropdb management command passes TLS parameters to psycopg."""
     databases = []

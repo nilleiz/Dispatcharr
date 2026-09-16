@@ -148,6 +148,14 @@ class OutputM3UTest(OutputEndpointTestMixin, TestCase):
         self.assertEqual(response.status_code, 403, "POST with body should return 403 Forbidden")
         self.assertIn("POST requests with body are not allowed", _response_text(response))
 
+    def test_generated_epg_url_preserves_date_episode_compatibility(self):
+        response = self.client.get(
+            f"{self._m3u_url()}?date_episode_compatibility=true"
+        )
+
+        content = _response_text(response)
+        self.assertIn("date_episode_compatibility=true", content)
+
 
 class OutputEPGXMLEscapingTest(OutputEndpointTestMixin, TestCase):
     """Test XML escaping of channel_id attributes in EPG generation"""
@@ -304,6 +312,157 @@ class OutputEPGXMLEscapingTest(OutputEndpointTestMixin, TestCase):
 
         self.assertLess(content.find('<title>First</title>'), content.find('<title>Second</title>'))
         self.assertLess(content.find('<title>Second</title>'), content.find('<title>Third</title>'))
+
+    def _create_date_episode(self, sub_title, custom_properties):
+        from django.utils import timezone
+        from apps.epg.models import ProgramData
+
+        epg_source = EPGSource.objects.create(
+            name=f"Date EPG {sub_title}", source_type="xmltv"
+        )
+        epg_data = EPGData.objects.create(
+            name=f"Date Station {sub_title}",
+            epg_source=epg_source,
+            tvg_id=f"date.station.{uuid4().hex}",
+        )
+        self._add_channel(
+            channel_number=150.0,
+            name=f"Date Channel {sub_title}",
+            tvg_id=epg_data.tvg_id,
+            epg_data=epg_data,
+        )
+        now = timezone.now()
+        ProgramData.objects.create(
+            epg=epg_data,
+            start_time=now + timedelta(hours=1),
+            end_time=now + timedelta(hours=2),
+            title="Documentary Series",
+            sub_title=sub_title,
+            tvg_id=epg_data.tvg_id,
+            custom_properties=custom_properties,
+        )
+
+    def _episode_numbers(self, content, sub_title):
+        tree = ET.fromstring(content)
+        programme = next(
+            item
+            for item in tree.findall(".//programme")
+            if item.findtext("sub-title") == sub_title
+        )
+        return {
+            item.get("system"): item.text
+            for item in programme.findall("episode-num")
+        }
+
+    def test_original_air_date_is_exported_without_changing_default_ids(self):
+        self._create_date_episode(
+            "Episode Without Number",
+            {
+                "dd_progid": "EP01646084.0886",
+                "imdb.com_id": "tt1234567",
+                "previously_shown": True,
+                "previously_shown_details": {"start": "2023-02-19"},
+            },
+        )
+
+        content = _response_text(
+            self.client.get(self._epg_url("tvg_id_source=tvg_id&days=1"))
+        )
+        numbers = self._episode_numbers(content, "Episode Without Number")
+
+        self.assertEqual(numbers["dd_progid"], "EP01646084.0886")
+        self.assertEqual(numbers["original-air-date"], "2023-02-19")
+        self.assertEqual(numbers["imdb.com"], "tt1234567")
+
+    def test_global_date_compatibility_only_suppresses_unnumbered_dd_progid(self):
+        from core.models import CoreSettings, EPG_SETTINGS_KEY
+
+        CoreSettings.objects.create(
+            key=EPG_SETTINGS_KEY,
+            name="EPG Settings",
+            value={"date_episode_compatibility": True},
+        )
+        self._create_date_episode(
+            "Episode Without Number",
+            {
+                "dd_progid": "EP01646084.0886",
+                "imdb.com_id": "tt1234567",
+                "previously_shown_details": {"start": "2023-02-19"},
+            },
+        )
+        self._create_date_episode(
+            "Numbered Episode",
+            {
+                "dd_progid": "EP01646084.0887",
+                "season": 2,
+                "episode": 4,
+                "previously_shown_details": {"start": "2023-02-26"},
+            },
+        )
+        self._create_date_episode(
+            "Episode Without Air Date",
+            {"dd_progid": "EP01646084.0888"},
+        )
+
+        content = _response_text(
+            self.client.get(self._epg_url("tvg_id_source=tvg_id&days=1"))
+        )
+
+        unnumbered = self._episode_numbers(content, "Episode Without Number")
+        self.assertNotIn("dd_progid", unnumbered)
+        self.assertEqual(unnumbered["original-air-date"], "2023-02-19")
+        self.assertEqual(unnumbered["imdb.com"], "tt1234567")
+
+        numbered = self._episode_numbers(content, "Numbered Episode")
+        self.assertEqual(numbered["dd_progid"], "EP01646084.0887")
+        self.assertEqual(numbered["xmltv_ns"], "1.3.")
+
+        undated = self._episode_numbers(content, "Episode Without Air Date")
+        self.assertEqual(undated["dd_progid"], "EP01646084.0888")
+
+    def test_url_date_compatibility_overrides_global_setting(self):
+        from core.models import CoreSettings, EPG_SETTINGS_KEY
+
+        setting = CoreSettings.objects.create(
+            key=EPG_SETTINGS_KEY,
+            name="EPG Settings",
+            value={"date_episode_compatibility": True},
+        )
+        self._create_date_episode(
+            "Episode Without Number",
+            {
+                "dd_progid": "EP01646084.0886",
+                "previously_shown_details": {"start": "2023-02-19"},
+            },
+        )
+
+        override_off = _response_text(
+            self.client.get(
+                self._epg_url(
+                    "tvg_id_source=tvg_id&days=1&date_episode_compatibility=false"
+                )
+            )
+        )
+        self.assertEqual(
+            self._episode_numbers(override_off, "Episode Without Number")[
+                "dd_progid"
+            ],
+            "EP01646084.0886",
+        )
+
+        setting.value = {"date_episode_compatibility": False}
+        setting.save()
+        override_on = _response_text(
+            self.client.get(
+                self._epg_url(
+                    "tvg_id_source=tvg_id&days=1&date_episode_compatibility=true"
+                )
+            )
+        )
+        self.assertNotIn(
+            "dd_progid",
+            self._episode_numbers(override_on, "Episode Without Number"),
+        )
 
     def test_override_epg_change_invalidates_xmltv_chunk_cache(self):
         """

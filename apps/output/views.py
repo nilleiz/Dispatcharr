@@ -295,7 +295,13 @@ def generate_m3u(request, profile_name=None, user=None):
         epg_base_url = f"{_base_url}{epg_path}"
 
         # Optionally preserve certain query parameters
-        preserved_params = ['tvg_id_source', 'cachedlogos', 'days', 'prev_days']
+        preserved_params = [
+            'tvg_id_source',
+            'cachedlogos',
+            'days',
+            'prev_days',
+            'date_episode_compatibility',
+        ]
         query_params = {k: v for k, v in request.GET.items() if k in preserved_params}
         if query_params:
             epg_url = f"{epg_base_url}?{urlencode(query_params)}"
