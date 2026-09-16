@@ -25,6 +25,7 @@ from apps.output.dummy_epg import (
     resolve_pattern_match_name,
 )
 from apps.output.streaming_chunk_cache import stream_cached_response
+from core.models import CoreSettings
 from core.utils import build_absolute_uri_with_port, log_system_event
 
 logger = logging.getLogger(__name__)
@@ -64,12 +65,22 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
             prev_days = 0
     use_cached_logos = request.GET.get('cachedlogos', 'true').lower() != 'false'
     tvg_id_source = request.GET.get('tvg_id_source', 'channel_number').lower()
+    compatibility_override = request.GET.get('date_episode_compatibility')
+    if compatibility_override is None:
+        date_episode_compatibility = CoreSettings.get_date_episode_compatibility()
+    else:
+        date_episode_compatibility = compatibility_override.lower() in (
+            '1',
+            'true',
+            'yes',
+            'on',
+        )
 
     request_origin = build_absolute_uri_with_port(request, "")
     cache_params = (
         f"{profile_name or 'all'}:{user.username if user else 'anonymous'}"
         f":d={num_days}:p={prev_days}:logos={use_cached_logos}:tvgid={tvg_id_source}"
-        f":origin={request_origin}"
+        f":origin={request_origin}:date_episode={date_episode_compatibility}"
     )
     content_cache_key = f"epg_content:{cache_params}"
 
@@ -378,9 +389,35 @@ def generate_epg(request, profile_name=None, user=None, *, xc_catchup_prev_days=
                         elif "episode" in custom_data:
                             program_xml.append(f'    <episode-num system="onscreen">E{custom_data["episode"]}</episode-num>')
 
+                        previously_shown_details = custom_data.get(
+                            'previously_shown_details'
+                        )
+                        original_air_date = ''
+                        if isinstance(previously_shown_details, dict):
+                            original_air_date = str(
+                                previously_shown_details.get('start') or ''
+                            ).strip()
+
+                        has_season_episode = (
+                            custom_data.get('season') is not None
+                            and custom_data.get('episode') is not None
+                        )
+                        suppress_dd_progid = (
+                            date_episode_compatibility
+                            and bool(original_air_date)
+                            and not has_season_episode
+                        )
+
                         # Handle dd_progid format
-                        if 'dd_progid' in custom_data:
+                        if 'dd_progid' in custom_data and not suppress_dd_progid:
                             program_xml.append(f'    <episode-num system="dd_progid">{html.escape(custom_data["dd_progid"])}</episode-num>')
+
+                        if original_air_date:
+                            program_xml.append(
+                                '    <episode-num system="original-air-date">'
+                                f'{html.escape(original_air_date)}'
+                                '</episode-num>'
+                            )
 
                         # Handle external database IDs
                         for system in ['thetvdb.com', 'themoviedb.org', 'imdb.com']:

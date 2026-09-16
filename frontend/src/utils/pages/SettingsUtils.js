@@ -40,6 +40,7 @@ const GROUP_CONFIG = {
       epg_match_ignore_prefixes: { type: 'array', default: [] },
       epg_match_ignore_suffixes: { type: 'array', default: [] },
       epg_match_ignore_custom: { type: 'array', default: [] },
+      date_episode_compatibility: { type: 'bool', default: false },
     },
   },
   dvr_settings: {
@@ -84,14 +85,17 @@ const GROUP_CONFIG = {
   },
 };
 
-const toOptionalIdString = (value) =>
-  value != null ? String(value) : null;
+const toOptionalIdString = (value) => (value != null ? String(value) : null);
 
 const toIntOr = (value, fallback) =>
   typeof value === 'number' ? value : parseInt(value, 10) || fallback;
 
 const toBool = (value, fallback = false) =>
-  typeof value === 'boolean' ? value : value == null ? fallback : Boolean(value);
+  typeof value === 'boolean'
+    ? value
+    : value == null
+      ? fallback
+      : Boolean(value);
 
 const parseM3uHashKey = (hashKey) => {
   if (typeof hashKey === 'string') {
@@ -238,16 +242,17 @@ export const getChangedGroupSettings = (values, settings, groupKey) => {
     }
 
     let actualValue = values[field];
-    if (
-      group.fields[field].type === 'array' &&
-      !Array.isArray(actualValue)
-    ) {
+    if (group.fields[field].type === 'array' && !Array.isArray(actualValue)) {
       actualValue = [];
     }
 
+    const storedValue = Object.prototype.hasOwnProperty.call(stored, field)
+      ? stored[field]
+      : parseFieldValue(group.fields[field], undefined);
+
     if (
       normalizeForCompare(groupKey, field, actualValue) ===
-      normalizeForCompare(groupKey, field, stored[field])
+      normalizeForCompare(groupKey, field, storedValue)
     ) {
       continue;
     }

@@ -119,7 +119,21 @@ describe('SettingsUtils', () => {
         epg_match_ignore_prefixes: [],
         epg_match_ignore_suffixes: [],
         epg_match_ignore_custom: [],
+        date_episode_compatibility: false,
       });
+    });
+
+    it('parses the global date episode compatibility setting', () => {
+      const result = SettingsUtils.parseGroupSettings(
+        {
+          epg_settings: {
+            value: { date_episode_compatibility: true },
+          },
+        },
+        'epg_settings'
+      );
+
+      expect(result.date_episode_compatibility).toBe(true);
     });
 
     it('parses system settings with defaults for missing keys', () => {
@@ -289,6 +303,30 @@ describe('SettingsUtils', () => {
 
       expect(changes).toEqual({ m3u_hash_key: ['name', 'url'] });
     });
+
+    it('detects date episode compatibility changes in epg settings', () => {
+      const changes = SettingsUtils.getChangedGroupSettings(
+        { date_episode_compatibility: true },
+        {
+          epg_settings: {
+            value: { date_episode_compatibility: false },
+          },
+        },
+        'epg_settings'
+      );
+
+      expect(changes).toEqual({ date_episode_compatibility: true });
+    });
+
+    it('does not persist a missing compatibility setting when it stays false', () => {
+      const changes = SettingsUtils.getChangedGroupSettings(
+        { date_episode_compatibility: false },
+        {},
+        'epg_settings'
+      );
+
+      expect(changes).toEqual({});
+    });
   });
 
   describe('saveGroupSettings', () => {
@@ -392,6 +430,20 @@ describe('SettingsUtils', () => {
           preferred_region: 'UK',
           catchup_enabled: true,
         },
+      });
+    });
+
+    it('creates epg settings with a coerced compatibility boolean', async () => {
+      API.createSetting.mockResolvedValue({});
+
+      await SettingsUtils.saveGroupSettings({}, 'epg_settings', {
+        date_episode_compatibility: 'true',
+      });
+
+      expect(API.createSetting).toHaveBeenCalledWith({
+        key: 'epg_settings',
+        name: 'EPG Settings',
+        value: { date_episode_compatibility: true },
       });
     });
 
