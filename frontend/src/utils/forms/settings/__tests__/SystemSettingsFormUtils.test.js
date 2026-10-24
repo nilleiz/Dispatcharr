@@ -16,6 +16,7 @@ describe('SystemSettingsFormUtils', () => {
         log_max_mb: 5,
         log_keep: 5,
         log_persist: true,
+        date_episode_compatibility: false,
       });
     });
 
@@ -44,6 +45,7 @@ describe('SystemSettingsFormUtils', () => {
       expect(result).toHaveProperty('max_system_events');
       expect(result).toHaveProperty('preferred_region');
       expect(result).toHaveProperty('auto_import_mapped_files');
+      expect(result).toHaveProperty('date_episode_compatibility', false);
     });
   });
 });

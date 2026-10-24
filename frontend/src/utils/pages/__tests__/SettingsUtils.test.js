@@ -123,6 +123,7 @@ describe('SettingsUtils', () => {
         epg_history_max_days: 30,
         epg_default_prev_days: 0,
         epg_default_days: 0,
+        date_episode_compatibility: false,
       });
     });
 
@@ -144,6 +145,28 @@ describe('SettingsUtils', () => {
       expect(result.epg_history_max_days).toBe(0);
       expect(result.epg_default_prev_days).toBe(0);
       expect(result.epg_default_days).toBe(0);
+    });
+
+    it('parses the global date episode compatibility setting', () => {
+      const result = SettingsUtils.parseGroupSettings(
+        {
+          epg_settings: {
+            value: {
+              epg_history_min_days: 0,
+              epg_history_max_days: '0',
+              epg_default_prev_days: 0,
+              epg_default_days: '0',
+              date_episode_compatibility: true,
+            },
+          },
+        },
+        'epg_settings'
+      );
+      expect(result.epg_history_min_days).toBe(0);
+      expect(result.epg_history_max_days).toBe(0);
+      expect(result.epg_default_prev_days).toBe(0);
+      expect(result.epg_default_days).toBe(0);
+      expect(result.date_episode_compatibility).toBe(true);
     });
 
     it('parses system settings with defaults for missing keys', () => {
@@ -313,6 +336,30 @@ describe('SettingsUtils', () => {
 
       expect(changes).toEqual({ m3u_hash_key: ['name', 'url'] });
     });
+
+    it('detects date episode compatibility changes in epg settings', () => {
+      const changes = SettingsUtils.getChangedGroupSettings(
+        { date_episode_compatibility: true },
+        {
+          epg_settings: {
+            value: { date_episode_compatibility: false },
+          },
+        },
+        'epg_settings'
+      );
+
+      expect(changes).toEqual({ date_episode_compatibility: true });
+    });
+
+    it('does not persist a missing compatibility setting when it stays false', () => {
+      const changes = SettingsUtils.getChangedGroupSettings(
+        { date_episode_compatibility: false },
+        {},
+        'epg_settings'
+      );
+
+      expect(changes).toEqual({});
+    });
   });
 
   describe('saveGroupSettings', () => {
@@ -416,6 +463,20 @@ describe('SettingsUtils', () => {
           preferred_region: 'UK',
           catchup_enabled: true,
         },
+      });
+    });
+
+    it('creates epg settings with a coerced compatibility boolean', async () => {
+      API.createSetting.mockResolvedValue({});
+
+      await SettingsUtils.saveGroupSettings({}, 'epg_settings', {
+        date_episode_compatibility: 'true',
+      });
+
+      expect(API.createSetting).toHaveBeenCalledWith({
+        key: 'epg_settings',
+        name: 'EPG Settings',
+        value: { date_episode_compatibility: true },
       });
     });
 
