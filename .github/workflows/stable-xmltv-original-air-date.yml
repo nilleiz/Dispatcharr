@@ -44,7 +44,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
           FEATURE_REPOSITORY: nilleiz/Dispatcharr
-          FEATURE_REF: feature/epg-air-date-compatibility
+          FEATURE_REF: feature/epg-air-date-compatibility-v033-single-commit
         shell: bash
         run: |
           set -euo pipefail
@@ -100,7 +100,7 @@ jobs:
         id: integration
         env:
           FEATURE_SHA: ${{ steps.release.outputs.feature_sha }}
-          FEATURE_REF: feature/epg-air-date-compatibility
+          FEATURE_REF: feature/epg-air-date-compatibility-v033-single-commit
         shell: bash
         run: |
           set -euo pipefail
