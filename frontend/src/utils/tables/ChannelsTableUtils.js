@@ -187,6 +187,8 @@ export const buildEPGUrl = (epgParams, epgUrl) => {
   if (epgParams.days > 0) params.append('days', epgParams.days.toString());
   if (epgParams.prev_days > 0)
     params.append('prev_days', epgParams.prev_days.toString());
+  if (epgParams.date_episode_compatibility)
+    params.append('date_episode_compatibility', 'true');
 
   const baseUrl = epgUrl;
   return params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;

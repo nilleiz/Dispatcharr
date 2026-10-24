@@ -725,6 +725,13 @@ class CoreSettings(models.Model):
             clamp_int(settings.get("epg_default_prev_days"), 0, 0, max_days),
             clamp_int(settings.get("epg_default_days"), 0, 0, EPG_DAYS_LIMIT),
         )
+            "date_episode_compatibility": False,
+        })
+
+    @classmethod
+    def get_date_episode_compatibility(cls):
+        """Whether unnumbered XMLTV episodes should prefer original air date."""
+        return cls.get_epg_settings().get("date_episode_compatibility") is True
 
     @classmethod
     def _safe_string_list(cls, value):

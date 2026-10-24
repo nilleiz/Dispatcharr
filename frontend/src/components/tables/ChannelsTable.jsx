@@ -500,6 +500,7 @@ const ChannelsTable = ({ onReady }) => {
     tvg_id_source: 'channel_number',
     days: 0,
     prev_days: 0,
+    date_episode_compatibility: false,
   });
 
   /**
@@ -1645,6 +1646,18 @@ const ChannelsTable = ({ onReady }) => {
                         }))
                       }
                     />
+                    <Switch
+                      label="Use Air Date for Unnumbered Episodes"
+                      description="Uses the original air date for programmes without SXXEXX definitions. Improves episode matching on some clients (e.g. Plex)."
+                      size="sm"
+                      checked={epgParams.date_episode_compatibility}
+                      onChange={(event) =>
+                        setEpgParams((prev) => ({
+                          ...prev,
+                          date_episode_compatibility: event.target.checked,
+                        }))
+                      }
+                    />
                     <Select
                       label="TVG-ID Source"
                       description="Value used to match EPG channels to M3U streams"
@@ -1761,7 +1774,7 @@ const ChannelsTable = ({ onReady }) => {
                     items={rows.map((row) => row.id)}
                     strategy={verticalListSortingStrategy}
                   >
-                  <CustomTable table={table} />
+                    <CustomTable table={table} />
                   </SortableContext>
                 </DndContext>
               </Box>
