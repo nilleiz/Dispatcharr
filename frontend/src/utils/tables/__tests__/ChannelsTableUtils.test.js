@@ -6,7 +6,14 @@ vi.mock('../../forms/ChannelUtils.js', () => ({
   normalizeFieldValue: vi.fn((field, value) => {
     if (value === '' || value === null || value === undefined) return null;
     if (field === 'channel_number') return parseFloat(value);
-    if (['channel_group_id', 'logo_id', 'epg_data_id', 'stream_profile_id'].includes(field)) {
+    if (
+      [
+        'channel_group_id',
+        'logo_id',
+        'epg_data_id',
+        'stream_profile_id',
+      ].includes(field)
+    ) {
       return parseInt(value, 10);
     }
     return value;
@@ -338,6 +345,7 @@ describe('ChannelsTableUtils', () => {
       tvg_id_source: 'channel_number',
       days: 0,
       prev_days: 0,
+      date_episode_compatibility: false,
     };
 
     it('returns base URL with no params when all defaults', () => {
@@ -379,6 +387,14 @@ describe('ChannelsTableUtils', () => {
         baseUrl
       );
       expect(result).toContain('prev_days=3');
+    });
+
+    it('appends date episode compatibility when enabled', () => {
+      const result = ChannelsTableUtils.buildEPGUrl(
+        { ...defaults, date_episode_compatibility: true },
+        baseUrl
+      );
+      expect(result).toContain('date_episode_compatibility=true');
     });
   });
 

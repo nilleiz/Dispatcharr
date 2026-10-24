@@ -9,5 +9,6 @@ export const getSystemSettingsFormInitialValues = () => {
     auto_import_mapped_files: true,
     enable_ip_lookup: true,
     catchup_enabled: true,
+    date_episode_compatibility: false,
   };
 };
