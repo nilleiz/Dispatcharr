@@ -151,7 +151,17 @@ jobs:
             -e POSTGRES_PASSWORD=secret \
             -e DISPATCHARR_LOG_LEVEL=WARNING \
             ghcr.io/dispatcharr/dispatcharr:base \
-            bash scripts/ci_bootstrap_backend.sh \
+            bash -c '
+              set -euo pipefail
+              export PUID=1000 PGID=1000
+              . docker/init/01-user-setup.sh
+              install -d -m 700 -o "$PUID" -g "$PGID" /tmp/dispatcharr-ci/db
+              PG_VERSION="$(ls /usr/lib/postgresql/ | sort -V | tail -n 1)"
+              # The base image may default to the C locale and SQL_ASCII.
+              # Bootstrap expects a UTF-8 template when creating the test database.
+              su - "$POSTGRES_USER" -c "/usr/lib/postgresql/${PG_VERSION}/bin/initdb --locale=C --encoding=UTF8 -D /tmp/dispatcharr-ci/db"
+              exec bash scripts/ci_bootstrap_backend.sh "$@"
+            ' _ \
               apps.epg.tests.test_extract_custom_properties \
               apps.epg.tests.test_serializers \
               apps.output.tests.test_views.OutputEPGXMLEscapingTest \
