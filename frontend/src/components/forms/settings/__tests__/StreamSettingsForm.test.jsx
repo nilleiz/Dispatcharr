@@ -114,6 +114,19 @@ vi.mock('@mantine/core', () => ({
       </select>
     </div>
   ),
+  NumberInput: ({ label, id, value, onChange, placeholder }) => (
+    <div>
+      <label htmlFor={id}>{label}</label>
+      <input
+        data-testid={id}
+        id={id}
+        aria-label={label}
+        placeholder={placeholder}
+        value={value ?? ''}
+        onChange={(e) => onChange?.(e.target.value)}
+      />
+    </div>
+  ),
   Select: ({ label, id, data, ...rest }) => (
     <div>
       <label htmlFor={id}>{label}</label>
@@ -138,6 +151,7 @@ vi.mock('@mantine/core', () => ({
       id={id}
       type="checkbox"
       checked={rest.checked ?? false}
+      disabled={rest.disabled}
       onChange={(e) => rest.onChange?.(e)}
     />
   ),
@@ -176,6 +190,9 @@ const mockFormValues = {
   default_stream_profile: '2',
   m3u_hash_key: ['name'],
   hdhr_output_profile_id: null,
+  hdhr_max_tuner_count: null,
+  hdhr_count_custom_streams: true,
+  hdhr_dedupe_custom_stream_urls: false,
 };
 
 const makeFormMock = (overrides = {}) => ({
@@ -187,6 +204,7 @@ const makeFormMock = (overrides = {}) => ({
   }),
   values: mockFormValues,
   setValues: vi.fn(),
+  setFieldValue: vi.fn(),
   getValues: vi.fn(() => mockFormValues),
   onSubmit: vi.fn((handler) => (e) => {
     e?.preventDefault?.();
@@ -324,6 +342,60 @@ describe('StreamSettingsForm', () => {
   });
 
   // ── Initialization ─────────────────────────────────────────────────────────
+  describe('HDHR tuner settings', () => {
+    it('renders the HDHR tuner controls', () => {
+      render(<StreamSettingsForm active={true} />);
+      expect(screen.getByTestId('hdhr_max_tuner_count')).toBeInTheDocument();
+      expect(
+        screen.getByTestId('hdhr_count_custom_streams')
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId('hdhr_dedupe_custom_stream_urls')
+      ).toBeInTheDocument();
+    });
+
+    it('stores a numeric max tuner count', () => {
+      render(<StreamSettingsForm active={true} />);
+
+      fireEvent.change(screen.getByTestId('hdhr_max_tuner_count'), {
+        target: { value: '20' },
+      });
+      expect(formMock.setFieldValue).toHaveBeenLastCalledWith(
+        'hdhr_max_tuner_count',
+        20
+      );
+    });
+
+    it('stores null when the max tuner count is cleared', () => {
+      ({ formMock } = setupMocks({
+        formOverrides: {
+          values: { ...mockFormValues, hdhr_max_tuner_count: 20 },
+        },
+      }));
+      render(<StreamSettingsForm active={true} />);
+
+      fireEvent.change(screen.getByTestId('hdhr_max_tuner_count'), {
+        target: { value: '' },
+      });
+      expect(formMock.setFieldValue).toHaveBeenLastCalledWith(
+        'hdhr_max_tuner_count',
+        null
+      );
+    });
+
+    it('disables URL de-duplication when custom streams are not counted', () => {
+      ({ formMock } = setupMocks({
+        formOverrides: {
+          values: { ...mockFormValues, hdhr_count_custom_streams: false },
+        },
+      }));
+      render(<StreamSettingsForm active={true} />);
+      expect(
+        screen.getByTestId('hdhr_dedupe_custom_stream_urls')
+      ).toBeDisabled();
+    });
+  });
+
   describe('initialization', () => {
     it('calls getStreamSettingsFormInitialValues on mount', () => {
       render(<StreamSettingsForm active={true} />);

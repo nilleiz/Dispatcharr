@@ -5,6 +5,7 @@ from rest_framework.permissions import AllowAny
 from apps.accounts.permissions import permissions_for_action
 from django.http import JsonResponse, HttpResponseForbidden, HttpResponse
 import logging
+from xml.sax.saxutils import escape as xml_escape
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from django.shortcuts import get_object_or_404
@@ -17,6 +18,33 @@ from core.utils import build_absolute_uri_with_port
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+# Default HDHomeRun DeviceID when no HDHRDevice row exists. It must not look like
+# a real HDHomeRun ID (8 hex digits with checksum) or a numeric IPv4 address:
+# Plex's HDHomeRun library treats e.g. "12345678" as the IP 0.188.97.78 and then
+# probes every tuner over UDP 65001 at that address, stalling device refreshes.
+DEFAULT_HDHR_DEVICE_ID = "dispatcharr"
+DEFAULT_HDHR_FRIENDLY_NAME = "Dispatcharr HDHomeRun"
+
+
+def _get_hdhr_tuner_count():
+    """Tuner count reported to HDHR clients (discover.json).
+
+    Uses the shared calculate_tuner_count() with the HDHR-only settings from
+    Stream Settings: optional maximum, whether custom streams are counted and
+    whether custom streams sharing a URL count once. The Xtream Codes API is
+    not affected by these settings.
+    """
+    from core.models import CoreSettings
+    from apps.m3u.utils import calculate_tuner_count
+
+    return calculate_tuner_count(
+        minimum=1,
+        unlimited_default=10,
+        count_custom_streams=CoreSettings.get_hdhr_count_custom_streams(),
+        dedupe_custom_urls=CoreSettings.get_hdhr_dedupe_custom_stream_urls(),
+        maximum=CoreSettings.get_hdhr_max_tuner_count(),
+    )
 
 
 def _hdhr_network_check(request):
@@ -63,12 +91,11 @@ class DiscoverAPIView(APIView):
         base_url = build_absolute_uri_with_port(request, f'/{"/".join(uri_parts)}/').rstrip("/")
         device = HDHRDevice.objects.first()
 
-        from apps.m3u.utils import calculate_tuner_count
-        tuner_count = calculate_tuner_count(minimum=1, unlimited_default=10)
+        tuner_count = _get_hdhr_tuner_count()
 
         slug_parts = [p for p in [channel_profile, str(output_profile_id) if output_profile_id is not None else None] if p]
-        device_ID = f"dispatcharr-hdhr-{'-'.join(slug_parts)}" if slug_parts else "12345678"
-        friendly_name = f"Dispatcharr HDHomeRun - {' / '.join(slug_parts)}" if slug_parts else "Dispatcharr HDHomeRun"
+        device_ID = f"dispatcharr-hdhr-{'-'.join(slug_parts)}" if slug_parts else DEFAULT_HDHR_DEVICE_ID
+        friendly_name = f"Dispatcharr HDHomeRun - {' / '.join(slug_parts)}" if slug_parts else DEFAULT_HDHR_FRIENDLY_NAME
 
         if not device:
             data = {
@@ -216,16 +243,21 @@ class HDHRDeviceXMLAPIView(APIView):
 
         base_url = build_absolute_uri_with_port(request, "/hdhr/").rstrip("/")
 
+        # Same identity source as discover.json (bare /hdhr/ endpoint).
+        device = HDHRDevice.objects.first()
+        device_id = device.device_id if device else DEFAULT_HDHR_DEVICE_ID
+        friendly_name = device.friendly_name if device else DEFAULT_HDHR_FRIENDLY_NAME
+
         xml_response = f"""<?xml version="1.0" encoding="utf-8"?>
         <root>
-            <DeviceID>12345678</DeviceID>
-            <FriendlyName>Dispatcharr HDHomeRun</FriendlyName>
+            <DeviceID>{xml_escape(device_id)}</DeviceID>
+            <FriendlyName>{xml_escape(friendly_name)}</FriendlyName>
             <ModelNumber>HDTC-2US</ModelNumber>
             <FirmwareName>hdhomerun3_atsc</FirmwareName>
             <FirmwareVersion>20200101</FirmwareVersion>
             <DeviceAuth>test_auth_token</DeviceAuth>
-            <BaseURL>{base_url}</BaseURL>
-            <LineupURL>{base_url}/lineup.json</LineupURL>
+            <BaseURL>{xml_escape(base_url)}</BaseURL>
+            <LineupURL>{xml_escape(base_url)}/lineup.json</LineupURL>
         </root>"""
 
         return HttpResponse(xml_response, content_type="application/xml")

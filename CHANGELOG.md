@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **HDHR tuner count can be capped and no longer has to include custom streams.** Settings → Stream Settings adds **HDHR Max Tuner Count** (`hdhr_max_tuner_count`, empty = automatic), **Count custom streams toward HDHR tuners** (`hdhr_count_custom_streams`, default on, the previous behavior), and **Count identical custom stream URLs once** (`hdhr_dedupe_custom_stream_urls`, default off). They only change the `TunerCount` reported by the HDHR emulator (`discover.json`). The Xtream Codes API (`max_connections`) is unchanged. Large numbers of custom fallback/slate streams used to inflate the reported tuner count (for example 310 tuners), and Plex DVR then spent minutes probing every tuner on each device refresh.
+
+### Changed
+
+- **The default HDHR DeviceID is now `dispatcharr` instead of `12345678`.** This only affects installs without an HDHR device entry; existing HDHR device entries and profile-specific IDs (`dispatcharr-hdhr-...`) are unchanged. Plex does not accept `12345678` as a HDHomeRun device ID and treats it as the IPv4 address 0.188.97.78, then probes each tuner over UDP 65001 at that address. **Plex will see a new device after upgrading:** re-add the DVR in Plex (or re-select the tuner) once. To keep the old identity, create an HDHR device entry with device ID `12345678`.
+
+### Fixed
+
+- **HDHR `device.xml` reports the same DeviceID and FriendlyName as `discover.json`.** It used to hard-code `12345678` even when an HDHR device entry defined another ID.
+
 ## [0.33.0] - 2026-10-24
 
 ### Added

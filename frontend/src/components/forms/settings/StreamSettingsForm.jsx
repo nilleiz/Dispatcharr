@@ -11,7 +11,15 @@ import {
   saveGroupSettings,
 } from '../../../utils/pages/SettingsUtils.js';
 import useSettingsSaveGuard from '../../../hooks/useSettingsSaveGuard.jsx';
-import { Alert, Button, Flex, MultiSelect, Select } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Flex,
+  MultiSelect,
+  NumberInput,
+  Select,
+  Switch,
+} from '@mantine/core';
 import ConfirmationDialog from '../../ConfirmationDialog.jsx';
 import { useForm } from '@mantine/form';
 import {
@@ -223,6 +231,43 @@ const StreamSettingsForm = React.memo(({ active }) => {
           data={outputProfiles
             .filter((p) => p.is_active)
             .map((p) => ({ value: `${p.id}`, label: p.name }))}
+        />
+        <NumberInput
+          id="hdhr_max_tuner_count"
+          name="hdhr_max_tuner_count"
+          label="HDHR Max Tuner Count"
+          description="Upper limit for the tuner count reported by the HDHR emulator (discover.json). Leave empty to report the automatic count. Does not affect the Xtream Codes API."
+          placeholder="Automatic"
+          min={1}
+          step={1}
+          allowDecimal={false}
+          allowNegative={false}
+          value={form.values['hdhr_max_tuner_count'] ?? ''}
+          onChange={(value) =>
+            form.setFieldValue(
+              'hdhr_max_tuner_count',
+              value === '' || value == null ? null : Number(value)
+            )
+          }
+        />
+        <Switch
+          id="hdhr_count_custom_streams"
+          name="hdhr_count_custom_streams"
+          label="Count custom streams toward HDHR tuners"
+          description="When off, custom streams (for example fallback or slate streams) do not increase the automatic HDHR tuner count."
+          {...form.getInputProps('hdhr_count_custom_streams', {
+            type: 'checkbox',
+          })}
+        />
+        <Switch
+          id="hdhr_dedupe_custom_stream_urls"
+          name="hdhr_dedupe_custom_stream_urls"
+          label="Count identical custom stream URLs once"
+          description="Custom streams that share the same URL add only one HDHR tuner."
+          disabled={!form.values['hdhr_count_custom_streams']}
+          {...form.getInputProps('hdhr_dedupe_custom_stream_urls', {
+            type: 'checkbox',
+          })}
         />
 
         <MultiSelect
