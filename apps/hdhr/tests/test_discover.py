@@ -172,12 +172,21 @@ class HDHRTunerUrlTests(HDHRTestBase):
             data["BaseURL"].endswith("/hdhr/Sports/output_profile/3/tuners/7")
         )
 
-    def test_url_tuner_limit_overrides_global_maximum(self):
+    def test_url_tuner_count_cannot_exceed_global_maximum(self):
         self._set_stream_settings(hdhr_max_tuner_count=20)
-        self.assertEqual(self._discover("/hdhr/tuners/50/discover.json")["TunerCount"], 50)
+        self.assertEqual(self._discover("/hdhr/tuners/50/discover.json")["TunerCount"], 20)
         self.assertEqual(self._discover("/hdhr/tuners/2/discover.json")["TunerCount"], 2)
 
-    def test_url_tuner_limit_is_capped_by_automatic_count(self):
+    def test_url_tuner_count_is_explicit_below_global_maximum(self):
+        # Automatic count is 4 here; an explicit count up to the global
+        # maximum is reported as is.
+        self._set_stream_settings(
+            hdhr_max_tuner_count=20, hdhr_count_custom_streams=False
+        )
+        self.assertEqual(self._discover("/hdhr/tuners/10/discover.json")["TunerCount"], 10)
+        self.assertEqual(self._discover()["TunerCount"], 4)
+
+    def test_url_tuner_count_capped_by_automatic_count_without_maximum(self):
         self._set_stream_settings(hdhr_count_custom_streams=False)
         self.assertEqual(self._discover("/hdhr/tuners/10/discover.json")["TunerCount"], 4)
 

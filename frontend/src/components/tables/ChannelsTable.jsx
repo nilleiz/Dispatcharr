@@ -367,6 +367,9 @@ const ChannelsTable = ({ onReady }) => {
 
   // store/settings
   const env_mode = useSettingsStore((s) => s.environment.env_mode);
+  const hdhrMaxTunerCount = useSettingsStore(
+    (s) => s.settings?.stream_settings?.value?.hdhr_max_tuner_count
+  );
   const outputProfiles = useOutputProfilesStore((s) => s.profiles);
   const showVideo = useVideoStore((s) => s.showVideo);
 
@@ -1450,10 +1453,17 @@ const ChannelsTable = ({ onReady }) => {
                         .map((p) => ({ value: `${p.id}`, label: p.name }))}
                     />
                     <NumberInput
-                      label="Max Tuners"
-                      description="Tuner count reported to this client. Overrides the HDHR Max Tuner Count setting; capped by the automatic count."
+                      label="Tuner Count"
+                      description={
+                        hdhrMaxTunerCount > 0
+                          ? `Tuner count reported to this client. At most ${hdhrMaxTunerCount} (HDHR Max Tuner Count).`
+                          : 'Tuner count reported to this client. At most the automatic tuner count.'
+                      }
                       placeholder="System default"
                       min={1}
+                      max={
+                        hdhrMaxTunerCount > 0 ? hdhrMaxTunerCount : undefined
+                      }
                       step={1}
                       allowDecimal={false}
                       allowNegative={false}

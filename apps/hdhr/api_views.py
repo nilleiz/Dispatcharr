@@ -56,26 +56,31 @@ def get_hdhr_device_id(channel_profile=None, output_profile_id=None, device=None
     return "-".join(parts)
 
 
-def _get_hdhr_tuner_count(tuner_limit=None):
+def _get_hdhr_tuner_count(tuner_count=None):
     """Tuner count reported to HDHR clients (discover.json).
 
-    Uses the shared calculate_tuner_count() with the HDHR-only settings from
-    Stream Settings: optional maximum, whether custom streams are counted and
-    whether custom streams sharing a URL count once. A positive ``tuner_limit``
-    from the URL (``/tuners/<n>/``) replaces the global maximum for that URL;
-    the automatic count still caps it. The Xtream Codes API is not affected.
+    Without a URL tuner count this is the shared calculate_tuner_count() with
+    the HDHR-only settings from Stream Settings (custom stream counting, URL
+    de-duplication) capped by HDHR Max Tuner Count. A positive ``tuner_count``
+    from the URL (``/tuners/<n>/``) is reported as is, but never above HDHR
+    Max Tuner Count, or above the automatic count when no maximum is set.
+    The Xtream Codes API is not affected.
     """
     from core.models import CoreSettings
     from apps.m3u.utils import calculate_tuner_count
 
-    maximum = tuner_limit if tuner_limit else CoreSettings.get_hdhr_max_tuner_count()
-    return calculate_tuner_count(
+    global_max = CoreSettings.get_hdhr_max_tuner_count()
+    if tuner_count and global_max:
+        return min(tuner_count, global_max)
+
+    automatic = calculate_tuner_count(
         minimum=1,
         unlimited_default=10,
         count_custom_streams=CoreSettings.get_hdhr_count_custom_streams(),
         dedupe_custom_urls=CoreSettings.get_hdhr_dedupe_custom_stream_urls(),
-        maximum=maximum,
+        maximum=global_max,
     )
+    return min(tuner_count, automatic) if tuner_count else automatic
 
 
 def _hdhr_network_check(request):

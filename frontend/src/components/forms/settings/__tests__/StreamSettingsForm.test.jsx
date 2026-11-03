@@ -95,6 +95,7 @@ vi.mock('@mantine/core', () => ({
     </button>
   ),
   Flex: ({ children }) => <div>{children}</div>,
+  Stack: ({ children }) => <div>{children}</div>,
   Group: ({ children }) => <div>{children}</div>,
   MultiSelect: ({ label, id, data, ...rest }) => (
     <div>
