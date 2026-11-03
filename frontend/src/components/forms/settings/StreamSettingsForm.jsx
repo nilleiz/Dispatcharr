@@ -4,6 +4,7 @@ import useUserAgentsStore from '../../../store/userAgents.jsx';
 import useStreamProfilesStore from '../../../store/streamProfiles.jsx';
 import useOutputProfilesStore from '../../../store/outputProfiles.jsx';
 import React, { useEffect, useState } from 'react';
+import API from '../../../api.js';
 import {
   getChangedGroupSettings,
   parseGroupSettings,
@@ -11,7 +12,16 @@ import {
   saveGroupSettings,
 } from '../../../utils/pages/SettingsUtils.js';
 import useSettingsSaveGuard from '../../../hooks/useSettingsSaveGuard.jsx';
-import { Alert, Button, Flex, MultiSelect, Select } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Flex,
+  MultiSelect,
+  NumberInput,
+  Select,
+  Switch,
+  TextInput,
+} from '@mantine/core';
 import ConfirmationDialog from '../../ConfirmationDialog.jsx';
 import { useForm } from '@mantine/form';
 import {
@@ -42,6 +52,10 @@ const StreamSettingsForm = React.memo(({ active }) => {
   const [rehashDialogType, setRehashDialogType] = useState(null); // 'save' or 'rehash'
   const { isSavingRef, runSave } = useSettingsSaveGuard();
 
+  const [hdhrIdentity, setHdhrIdentity] = useState(null);
+  const [regenerateIdentityOpen, setRegenerateIdentityOpen] = useState(false);
+  const [regeneratingIdentity, setRegeneratingIdentity] = useState(false);
+
   const form = useForm({
     mode: 'controlled',
     initialValues: getStreamSettingsFormInitialValues(),
@@ -54,6 +68,34 @@ const StreamSettingsForm = React.memo(({ active }) => {
       setRehashSuccess(false);
     }
   }, [active]);
+
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    let cancelled = false;
+    API.getHDHRIdentity().then((identity) => {
+      if (!cancelled && identity) {
+        setHdhrIdentity(identity);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [active]);
+
+  const onRegenerateIdentity = async () => {
+    setRegeneratingIdentity(true);
+    try {
+      const identity = await API.regenerateHDHRIdentity();
+      if (identity) {
+        setHdhrIdentity(identity);
+      }
+    } finally {
+      setRegeneratingIdentity(false);
+      setRegenerateIdentityOpen(false);
+    }
+  };
 
   useEffect(() => {
     if (settings && !isSavingRef.current) {
@@ -224,6 +266,65 @@ const StreamSettingsForm = React.memo(({ active }) => {
             .filter((p) => p.is_active)
             .map((p) => ({ value: `${p.id}`, label: p.name }))}
         />
+        <NumberInput
+          id="hdhr_max_tuner_count"
+          name="hdhr_max_tuner_count"
+          label="HDHR Max Tuner Count"
+          description="Upper limit for the tuner count reported by the HDHR emulator (discover.json). Leave empty to report the automatic count. Does not affect the Xtream Codes API."
+          placeholder="Automatic"
+          min={1}
+          step={1}
+          allowDecimal={false}
+          allowNegative={false}
+          value={form.values['hdhr_max_tuner_count'] ?? ''}
+          onChange={(value) =>
+            form.setFieldValue(
+              'hdhr_max_tuner_count',
+              value === '' || value == null ? null : Number(value)
+            )
+          }
+        />
+        <Switch
+          id="hdhr_count_custom_streams"
+          name="hdhr_count_custom_streams"
+          label="Count custom streams toward HDHR tuners"
+          description="When off, custom streams (for example fallback or slate streams) do not increase the automatic HDHR tuner count."
+          {...form.getInputProps('hdhr_count_custom_streams', {
+            type: 'checkbox',
+          })}
+        />
+        <Switch
+          id="hdhr_dedupe_custom_stream_urls"
+          name="hdhr_dedupe_custom_stream_urls"
+          label="Count identical custom stream URLs once"
+          description="Custom streams that share the same URL add only one HDHR tuner."
+          disabled={!form.values['hdhr_count_custom_streams']}
+          {...form.getInputProps('hdhr_dedupe_custom_stream_urls', {
+            type: 'checkbox',
+          })}
+        />
+        <Flex gap="xs" align="flex-end">
+          <TextInput
+            id="hdhr_device_id"
+            label="HDHR Device ID"
+            description={
+              hdhrIdentity?.device_override
+                ? 'Fixed by an HDHR device entry. Profile URLs use the same ID.'
+                : 'Base DeviceID of this instance. Profile URLs append the profile and output profile. Regenerate after cloning an instance so HDHR clients can tell both apart.'
+            }
+            value={hdhrIdentity?.device_id ?? ''}
+            readOnly
+            style={{ flex: 1 }}
+          />
+          <Button
+            variant="outline"
+            color="orange"
+            onClick={() => setRegenerateIdentityOpen(true)}
+            disabled={!hdhrIdentity || hdhrIdentity.device_override}
+          >
+            Regenerate
+          </Button>
+        </Flex>
 
         <MultiSelect
           id="m3u_hash_key"
@@ -288,6 +389,18 @@ Please ensure you have time to let this complete before proceeding.`}
         cancelLabel="Cancel"
         actionKey="rehash-streams"
         onSuppressChange={suppressWarning}
+        size="md"
+      />
+
+      <ConfirmationDialog
+        opened={regenerateIdentityOpen}
+        onClose={() => setRegenerateIdentityOpen(false)}
+        onConfirm={onRegenerateIdentity}
+        loading={regeneratingIdentity}
+        title="Regenerate HDHR Device ID"
+        message="HDHR clients such as Plex will see this server as a new device and its DVR/tuner setup has to be added again. Continue?"
+        confirmLabel="Regenerate"
+        cancelLabel="Cancel"
         size="md"
       />
     </>

@@ -83,6 +83,9 @@ describe('SettingsUtils', () => {
         default_output_format: 'fmp4',
         hdhr_output_profile_id: '9',
         m3u_hash_key: ['name', 'url'],
+        hdhr_max_tuner_count: null,
+        hdhr_count_custom_streams: true,
+        hdhr_dedupe_custom_stream_urls: false,
       });
       expect(result).not.toHaveProperty('output_profile_id');
       expect(result).not.toHaveProperty('comskip_enabled');
@@ -312,6 +315,89 @@ describe('SettingsUtils', () => {
       );
 
       expect(changes).toEqual({ m3u_hash_key: ['name', 'url'] });
+    });
+  });
+
+  describe('HDHR tuner settings', () => {
+    it('parses stored HDHR tuner settings', () => {
+      const result = SettingsUtils.parseGroupSettings(
+        {
+          stream_settings: {
+            value: {
+              hdhr_max_tuner_count: 20,
+              hdhr_count_custom_streams: false,
+              hdhr_dedupe_custom_stream_urls: true,
+            },
+          },
+        },
+        'stream_settings'
+      );
+
+      expect(result.hdhr_max_tuner_count).toBe(20);
+      expect(result.hdhr_count_custom_streams).toBe(false);
+      expect(result.hdhr_dedupe_custom_stream_urls).toBe(true);
+    });
+
+    it('treats empty or invalid max tuner count as automatic (null)', () => {
+      for (const raw of [null, '', 0, -3, 'abc']) {
+        const result = SettingsUtils.parseGroupSettings(
+          { stream_settings: { value: { hdhr_max_tuner_count: raw } } },
+          'stream_settings'
+        );
+        expect(result.hdhr_max_tuner_count).toBeNull();
+      }
+    });
+
+    it('reports a changed max tuner count and ignores unchanged values', () => {
+      const settings = {
+        stream_settings: { value: { hdhr_max_tuner_count: 20 } },
+      };
+
+      expect(
+        SettingsUtils.getChangedGroupSettings(
+          { hdhr_max_tuner_count: 20 },
+          settings,
+          'stream_settings'
+        )
+      ).toEqual({});
+      expect(
+        SettingsUtils.getChangedGroupSettings(
+          { hdhr_max_tuner_count: null },
+          settings,
+          'stream_settings'
+        )
+      ).toEqual({ hdhr_max_tuner_count: null });
+    });
+
+    it('saves max tuner count as an integer or null', async () => {
+      const settings = {
+        stream_settings: { id: 1, key: 'stream_settings', value: {} },
+      };
+      API.updateSetting.mockResolvedValue({});
+
+      await SettingsUtils.saveGroupSettings(settings, 'stream_settings', {
+        hdhr_max_tuner_count: '20',
+        hdhr_count_custom_streams: false,
+        hdhr_dedupe_custom_stream_urls: true,
+      });
+      expect(API.updateSetting).toHaveBeenLastCalledWith({
+        id: 1,
+        key: 'stream_settings',
+        value: {
+          hdhr_max_tuner_count: 20,
+          hdhr_count_custom_streams: false,
+          hdhr_dedupe_custom_stream_urls: true,
+        },
+      });
+
+      await SettingsUtils.saveGroupSettings(settings, 'stream_settings', {
+        hdhr_max_tuner_count: '',
+      });
+      expect(API.updateSetting).toHaveBeenLastCalledWith({
+        id: 1,
+        key: 'stream_settings',
+        value: { hdhr_max_tuner_count: null },
+      });
     });
   });
 

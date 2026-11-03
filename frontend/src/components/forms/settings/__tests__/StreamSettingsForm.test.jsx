@@ -32,6 +32,12 @@ vi.mock('../../../../utils/forms/settings/StreamSettingsFormUtils.js', () => ({
 
 // ── Mantine form ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/form', () => ({ useForm: vi.fn() }));
+vi.mock('../../../../api.js', () => ({
+  default: {
+    getHDHRIdentity: vi.fn(),
+    regenerateHDHRIdentity: vi.fn(),
+  },
+}));
 
 // ── ConfirmationDialog mock ────────────────────────────────────────────────────
 vi.mock('../../../ConfirmationDialog.jsx', () => ({
@@ -114,6 +120,19 @@ vi.mock('@mantine/core', () => ({
       </select>
     </div>
   ),
+  NumberInput: ({ label, id, value, onChange, placeholder }) => (
+    <div>
+      <label htmlFor={id}>{label}</label>
+      <input
+        data-testid={id}
+        id={id}
+        aria-label={label}
+        placeholder={placeholder}
+        value={value ?? ''}
+        onChange={(e) => onChange?.(e.target.value)}
+      />
+    </div>
+  ),
   Select: ({ label, id, data, ...rest }) => (
     <div>
       <label htmlFor={id}>{label}</label>
@@ -138,8 +157,21 @@ vi.mock('@mantine/core', () => ({
       id={id}
       type="checkbox"
       checked={rest.checked ?? false}
+      disabled={rest.disabled}
       onChange={(e) => rest.onChange?.(e)}
     />
+  ),
+  TextInput: ({ label, id, value, readOnly }) => (
+    <div>
+      <label htmlFor={id}>{label}</label>
+      <input
+        data-testid={id}
+        id={id}
+        aria-label={label}
+        value={value ?? ''}
+        readOnly={readOnly}
+      />
+    </div>
   ),
   Text: ({ children, size, fw }) => (
     <span data-size={size} data-fw={fw}>
@@ -157,6 +189,7 @@ import useUserAgentsStore from '../../../../store/userAgents.jsx';
 import useStreamProfilesStore from '../../../../store/streamProfiles.jsx';
 import useOutputProfilesStore from '../../../../store/outputProfiles.jsx';
 import { useForm } from '@mantine/form';
+import API from '../../../../api.js';
 import {
   getChangedGroupSettings,
   parseGroupSettings,
@@ -176,6 +209,9 @@ const mockFormValues = {
   default_stream_profile: '2',
   m3u_hash_key: ['name'],
   hdhr_output_profile_id: null,
+  hdhr_max_tuner_count: null,
+  hdhr_count_custom_streams: true,
+  hdhr_dedupe_custom_stream_urls: false,
 };
 
 const makeFormMock = (overrides = {}) => ({
@@ -187,6 +223,7 @@ const makeFormMock = (overrides = {}) => ({
   }),
   values: mockFormValues,
   setValues: vi.fn(),
+  setFieldValue: vi.fn(),
   getValues: vi.fn(() => mockFormValues),
   onSubmit: vi.fn((handler) => (e) => {
     e?.preventDefault?.();
@@ -232,6 +269,16 @@ const setupMocks = ({
   vi.mocked(getChangedGroupSettings).mockReturnValue({ default_user_agent: '1' });
   vi.mocked(saveGroupSettings).mockResolvedValue(undefined);
   vi.mocked(rehashStreams).mockResolvedValue(undefined);
+  vi.mocked(API.getHDHRIdentity).mockResolvedValue({
+    instance_id: 'abcd1234',
+    device_id: 'dispatcharr-abcd1234',
+    device_override: false,
+  });
+  vi.mocked(API.regenerateHDHRIdentity).mockResolvedValue({
+    instance_id: 'wxyz9876',
+    device_id: 'dispatcharr-wxyz9876',
+    device_override: false,
+  });
 
   vi.mocked(useSettingsStore).mockImplementation((sel) => sel({ settings }));
   vi.mocked(useSettingsStore).getState = vi.fn(() => ({ settings }));
@@ -324,6 +371,110 @@ describe('StreamSettingsForm', () => {
   });
 
   // ── Initialization ─────────────────────────────────────────────────────────
+  describe('HDHR tuner settings', () => {
+    it('renders the HDHR tuner controls', () => {
+      render(<StreamSettingsForm active={true} />);
+      expect(screen.getByTestId('hdhr_max_tuner_count')).toBeInTheDocument();
+      expect(
+        screen.getByTestId('hdhr_count_custom_streams')
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId('hdhr_dedupe_custom_stream_urls')
+      ).toBeInTheDocument();
+    });
+
+    it('stores a numeric max tuner count', () => {
+      render(<StreamSettingsForm active={true} />);
+
+      fireEvent.change(screen.getByTestId('hdhr_max_tuner_count'), {
+        target: { value: '20' },
+      });
+      expect(formMock.setFieldValue).toHaveBeenLastCalledWith(
+        'hdhr_max_tuner_count',
+        20
+      );
+    });
+
+    it('stores null when the max tuner count is cleared', () => {
+      ({ formMock } = setupMocks({
+        formOverrides: {
+          values: { ...mockFormValues, hdhr_max_tuner_count: 20 },
+        },
+      }));
+      render(<StreamSettingsForm active={true} />);
+
+      fireEvent.change(screen.getByTestId('hdhr_max_tuner_count'), {
+        target: { value: '' },
+      });
+      expect(formMock.setFieldValue).toHaveBeenLastCalledWith(
+        'hdhr_max_tuner_count',
+        null
+      );
+    });
+
+    it('disables URL de-duplication when custom streams are not counted', () => {
+      ({ formMock } = setupMocks({
+        formOverrides: {
+          values: { ...mockFormValues, hdhr_count_custom_streams: false },
+        },
+      }));
+      render(<StreamSettingsForm active={true} />);
+      expect(
+        screen.getByTestId('hdhr_dedupe_custom_stream_urls')
+      ).toBeDisabled();
+    });
+  });
+
+  describe('HDHR device identity', () => {
+    it('shows the current HDHR device ID', async () => {
+      render(<StreamSettingsForm active={true} />);
+      await waitFor(() =>
+        expect(screen.getByTestId('hdhr_device_id')).toHaveValue(
+          'dispatcharr-abcd1234'
+        )
+      );
+    });
+
+    it('does not load the identity while inactive', () => {
+      render(<StreamSettingsForm active={false} />);
+      expect(API.getHDHRIdentity).not.toHaveBeenCalled();
+    });
+
+    it('regenerates the ID only after confirmation', async () => {
+      render(<StreamSettingsForm active={true} />);
+      await waitFor(() =>
+        expect(screen.getByText('Regenerate')).not.toBeDisabled()
+      );
+
+      fireEvent.click(screen.getByText('Regenerate'));
+      expect(screen.getByTestId('confirm-title')).toHaveTextContent(
+        'Regenerate HDHR Device ID'
+      );
+      expect(API.regenerateHDHRIdentity).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId('confirm-ok'));
+      await waitFor(() =>
+        expect(screen.getByTestId('hdhr_device_id')).toHaveValue(
+          'dispatcharr-wxyz9876'
+        )
+      );
+      expect(API.regenerateHDHRIdentity).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables regeneration when an HDHR device entry fixes the ID', async () => {
+      vi.mocked(API.getHDHRIdentity).mockResolvedValue({
+        instance_id: 'abcd1234',
+        device_id: 'living-room',
+        device_override: true,
+      });
+      render(<StreamSettingsForm active={true} />);
+      await waitFor(() =>
+        expect(screen.getByTestId('hdhr_device_id')).toHaveValue('living-room')
+      );
+      expect(screen.getByText('Regenerate')).toBeDisabled();
+    });
+  });
+
   describe('initialization', () => {
     it('calls getStreamSettingsFormInitialValues on mount', () => {
       render(<StreamSettingsForm active={true} />);

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **HDHR tuner count can be capped and no longer has to include custom streams.** Settings → Stream Settings adds **HDHR Max Tuner Count** (`hdhr_max_tuner_count`, empty = automatic), **Count custom streams toward HDHR tuners** (`hdhr_count_custom_streams`, default on, the previous behavior), and **Count identical custom stream URLs once** (`hdhr_dedupe_custom_stream_urls`, default off). They only change the `TunerCount` reported by the HDHR emulator (`discover.json`). The Xtream Codes API (`max_connections`) is unchanged. Large numbers of custom fallback/slate streams used to inflate the reported tuner count (for example 310 tuners), and Plex DVR then spent minutes probing every tuner on each device refresh.
+- **HDHR URLs can carry their own tuner count.** The HDHR link popover in Channels adds **Max Tuners**, which appends `/tuners/<n>` to the generated URL (for example `/hdhr/output_profile/3/tuners/20`). It replaces HDHR Max Tuner Count for clients using that URL and is still capped by the automatic count. All HDHR endpoints (`discover.json`, `lineup.json`, `lineup_status.json`) accept the segment after the optional channel profile and output profile segments, and `BaseURL`/`LineupURL` keep it. The segment does not change the DeviceID.
+- **The HDHR DeviceID of an instance can be viewed and regenerated.** Settings → Stream Settings shows the base HDHR DeviceID with a **Regenerate** button (admin API: `GET`/`POST /api/hdhr/identity/`). Regenerate after cloning an instance (for example a test copy of a production server) so HDHR clients can tell both apart.
+
+### Changed
+
+- **HDHR DeviceIDs now contain a random per-instance part.** Each instance generates an 8-character ID once and stores it (settings key `hdhr_identity`), so the DeviceID stays stable across restarts and upgrades but differs between instances. The bare `/hdhr/` endpoint and `device.xml` report `dispatcharr-<id>` (previously `12345678`), and profile URLs report `dispatcharr-<id>-<channel profile>-<output profile>` (previously `dispatcharr-hdhr-...`, identical on every instance). Plex does not accept `12345678` as a HDHomeRun device ID and treats it as the IPv4 address 0.188.97.78, then probes each tuner over UDP 65001 at that address; and two servers reporting the same ID cannot both be added to one Plex server. **Plex and other HDHR clients will see new devices after upgrading:** re-add the DVR (or re-select the tuner) once. An existing HDHR device entry still sets a fixed DeviceID for every URL, as before.
+
+### Fixed
+
+- **HDHR `device.xml` reports the same DeviceID and FriendlyName as `discover.json`.** It used to hard-code `12345678` even when an HDHR device entry defined another ID.
+
 ## [0.33.0] - 2026-10-24
 
 ### Added
