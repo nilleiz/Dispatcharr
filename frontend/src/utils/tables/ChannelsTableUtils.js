@@ -227,9 +227,14 @@ export const buildFetchParams = ({
   return params;
 };
 
-export const buildHDHRUrl = (hdhrOutputProfileId, hdhrUrl) => {
-  if (!hdhrOutputProfileId) return hdhrUrl;
-  // Insert output_profile segment before the trailing slash (or at end)
-  const base = hdhrUrl.replace(/\/$/, '');
-  return `${base}/output_profile/${hdhrOutputProfileId}`;
+export const buildHDHRUrl = (hdhrOutputProfileId, hdhrUrl, hdhrTunerLimit) => {
+  const tunerLimit = parseInt(hdhrTunerLimit, 10);
+  const hasTunerLimit = Number.isFinite(tunerLimit) && tunerLimit > 0;
+  if (!hdhrOutputProfileId && !hasTunerLimit) return hdhrUrl;
+  // Insert segments before the trailing slash (or at end). The tuner limit
+  // must be the last segment: HDHR clients append discover.json after it.
+  let url = hdhrUrl.replace(/\/$/, '');
+  if (hdhrOutputProfileId) url = `${url}/output_profile/${hdhrOutputProfileId}`;
+  if (hasTunerLimit) url = `${url}/tuners/${tunerLimit}`;
+  return url;
 };

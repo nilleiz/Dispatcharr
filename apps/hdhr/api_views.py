@@ -2,7 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
-from apps.accounts.permissions import permissions_for_action
+from apps.accounts.permissions import IsAdmin, permissions_for_action
 from django.http import JsonResponse, HttpResponseForbidden, HttpResponse
 import logging
 from xml.sax.saxutils import escape as xml_escape
@@ -19,31 +19,62 @@ from core.utils import build_absolute_uri_with_port
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# Default HDHomeRun DeviceID when no HDHRDevice row exists. It must not look like
-# a real HDHomeRun ID (8 hex digits with checksum) or a numeric IPv4 address:
-# Plex's HDHomeRun library treats e.g. "12345678" as the IP 0.188.97.78 and then
-# probes every tuner over UDP 65001 at that address, stalling device refreshes.
-DEFAULT_HDHR_DEVICE_ID = "dispatcharr"
+# DeviceIDs are "dispatcharr-<instance id>[-<profile>][-<output profile>]".
+# The random per-instance part keeps two Dispatcharr servers in one Plex apart,
+# and the "dispatcharr-" prefix keeps the ID from looking like a real HDHomeRun
+# ID (8 hex digits with checksum) or a numeric IPv4 address: Plex's HDHomeRun
+# library treated the old default "12345678" as the IP 0.188.97.78 and probed
+# every tuner over UDP 65001 at that address, stalling device refreshes.
+HDHR_DEVICE_ID_PREFIX = "dispatcharr"
 DEFAULT_HDHR_FRIENDLY_NAME = "Dispatcharr HDHomeRun"
 
 
-def _get_hdhr_tuner_count():
+def _hdhr_slug_parts(channel_profile=None, output_profile_id=None):
+    return [
+        p
+        for p in [
+            channel_profile,
+            str(output_profile_id) if output_profile_id is not None else None,
+        ]
+        if p
+    ]
+
+
+def get_hdhr_device_id(channel_profile=None, output_profile_id=None, device=None):
+    """DeviceID reported by discover.json and device.xml.
+
+    An HDHRDevice row keeps precedence (fixed ID for every URL, as before).
+    The per-URL tuner limit is not part of the ID, so changing it does not
+    make HDHR clients see a new device.
+    """
+    if device is not None:
+        return device.device_id
+    from core.models import CoreSettings
+
+    parts = [HDHR_DEVICE_ID_PREFIX, CoreSettings.get_hdhr_instance_id()]
+    parts.extend(_hdhr_slug_parts(channel_profile, output_profile_id))
+    return "-".join(parts)
+
+
+def _get_hdhr_tuner_count(tuner_limit=None):
     """Tuner count reported to HDHR clients (discover.json).
 
     Uses the shared calculate_tuner_count() with the HDHR-only settings from
     Stream Settings: optional maximum, whether custom streams are counted and
-    whether custom streams sharing a URL count once. The Xtream Codes API is
-    not affected by these settings.
+    whether custom streams sharing a URL count once. A positive ``tuner_limit``
+    from the URL (``/tuners/<n>/``) replaces the global maximum for that URL;
+    the automatic count still caps it. The Xtream Codes API is not affected.
     """
     from core.models import CoreSettings
     from apps.m3u.utils import calculate_tuner_count
 
+    maximum = tuner_limit if tuner_limit else CoreSettings.get_hdhr_max_tuner_count()
     return calculate_tuner_count(
         minimum=1,
         unlimited_default=10,
         count_custom_streams=CoreSettings.get_hdhr_count_custom_streams(),
         dedupe_custom_urls=CoreSettings.get_hdhr_dedupe_custom_stream_urls(),
-        maximum=CoreSettings.get_hdhr_max_tuner_count(),
+        maximum=maximum,
     )
 
 
@@ -76,7 +107,7 @@ class DiscoverAPIView(APIView):
     @extend_schema(
         description="Retrieve HDHomeRun device discovery information",
     )
-    def get(self, request, channel_profile=None, output_profile_id=None):
+    def get(self, request, channel_profile=None, output_profile_id=None, tuner_limit=None):
         blocked = _hdhr_network_check(request)
         if blocked is not None:
             return blocked
@@ -87,14 +118,17 @@ class DiscoverAPIView(APIView):
         if output_profile_id is not None:
             uri_parts.append("output_profile")
             uri_parts.append(str(output_profile_id))
+        if tuner_limit:
+            uri_parts.append("tuners")
+            uri_parts.append(str(tuner_limit))
 
         base_url = build_absolute_uri_with_port(request, f'/{"/".join(uri_parts)}/').rstrip("/")
         device = HDHRDevice.objects.first()
 
-        tuner_count = _get_hdhr_tuner_count()
+        tuner_count = _get_hdhr_tuner_count(tuner_limit)
 
-        slug_parts = [p for p in [channel_profile, str(output_profile_id) if output_profile_id is not None else None] if p]
-        device_ID = f"dispatcharr-hdhr-{'-'.join(slug_parts)}" if slug_parts else DEFAULT_HDHR_DEVICE_ID
+        slug_parts = _hdhr_slug_parts(channel_profile, output_profile_id)
+        device_ID = get_hdhr_device_id(channel_profile, output_profile_id)
         friendly_name = f"Dispatcharr HDHomeRun - {' / '.join(slug_parts)}" if slug_parts else DEFAULT_HDHR_FRIENDLY_NAME
 
         if not device:
@@ -150,7 +184,7 @@ class LineupAPIView(APIView):
     @extend_schema(
         description="Retrieve the available channel lineup",
     )
-    def get(self, request, channel_profile=None, output_profile_id=None):
+    def get(self, request, channel_profile=None, output_profile_id=None, tuner_limit=None):
         blocked = _hdhr_network_check(request)
         if blocked is not None:
             return blocked
@@ -214,7 +248,7 @@ class LineupStatusAPIView(APIView):
     @extend_schema(
         description="Retrieve the HDHomeRun lineup status",
     )
-    def get(self, request, channel_profile=None, output_profile_id=None):
+    def get(self, request, channel_profile=None, output_profile_id=None, tuner_limit=None):
         blocked = _hdhr_network_check(request)
         if blocked is not None:
             return blocked
@@ -245,7 +279,7 @@ class HDHRDeviceXMLAPIView(APIView):
 
         # Same identity source as discover.json (bare /hdhr/ endpoint).
         device = HDHRDevice.objects.first()
-        device_id = device.device_id if device else DEFAULT_HDHR_DEVICE_ID
+        device_id = get_hdhr_device_id(device=device)
         friendly_name = device.friendly_name if device else DEFAULT_HDHR_FRIENDLY_NAME
 
         xml_response = f"""<?xml version="1.0" encoding="utf-8"?>
@@ -261,3 +295,34 @@ class HDHRDeviceXMLAPIView(APIView):
         </root>"""
 
         return HttpResponse(xml_response, content_type="application/xml")
+
+
+# 🔹 6) HDHR identity (per-instance DeviceID part)
+class HDHRIdentityAPIView(APIView):
+    """Show or regenerate the random per-instance part of the HDHR DeviceID."""
+
+    def get_permissions(self):
+        return [IsAdmin()]
+
+    def _payload(self):
+        from core.models import CoreSettings
+
+        device = HDHRDevice.objects.first()
+        return {
+            "instance_id": CoreSettings.get_hdhr_instance_id(),
+            "device_id": get_hdhr_device_id(device=device),
+            "device_override": device is not None,
+        }
+
+    @extend_schema(description="Get the HDHR instance ID and the resulting DeviceID")
+    def get(self, request):
+        return Response(self._payload())
+
+    @extend_schema(
+        description="Regenerate the HDHR instance ID. HDHR clients such as Plex will see new devices."
+    )
+    def post(self, request):
+        from core.models import CoreSettings
+
+        CoreSettings.regenerate_hdhr_instance_id()
+        return Response(self._payload())
