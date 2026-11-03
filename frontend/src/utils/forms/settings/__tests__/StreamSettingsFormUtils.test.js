@@ -23,6 +23,9 @@ describe('StreamSettingsFormUtils', () => {
         default_output_format: 'mpegts',
         hdhr_output_profile_id: null,
         hdhr_output_format: 'mpegts',
+        hdhr_max_tuner_count: null,
+        hdhr_count_custom_streams: true,
+        hdhr_dedupe_custom_stream_urls: false,
       });
     });
 

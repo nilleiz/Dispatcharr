@@ -146,7 +146,13 @@ def decrement_stream_count(account):
             account.save(update_fields=['active_streams'])
 
 
-def calculate_tuner_count(minimum=1, unlimited_default=10):
+def calculate_tuner_count(
+    minimum=1,
+    unlimited_default=10,
+    count_custom_streams=True,
+    dedupe_custom_urls=False,
+    maximum=None,
+):
     """
     Calculate tuner/connection count from active M3U profiles and custom streams.
     This is the centralized function used by both HDHR and XtreamCodes APIs.
@@ -154,10 +160,20 @@ def calculate_tuner_count(minimum=1, unlimited_default=10):
     Args:
         minimum (int): Minimum number to return (default: 1)
         unlimited_default (int): Default value when unlimited profiles exist (default: 10)
+        count_custom_streams (bool): Add custom streams to the count (default: True)
+        dedupe_custom_urls (bool): Count custom streams sharing the same URL only
+            once (default: False). Streams without a URL are counted individually.
+        maximum (int | None): Optional upper bound applied after ``minimum``.
+            ``None`` (default) or a non-positive value means no upper bound.
 
     Returns:
         int: Calculated tuner/connection count
     """
+    cap = maximum if isinstance(maximum, int) and not isinstance(maximum, bool) and maximum > 0 else None
+
+    def _apply_cap(value):
+        return min(cap, value) if cap is not None else value
+
     try:
         from apps.m3u.models import M3UAccountProfile
         from apps.channels.models import Stream
@@ -182,8 +198,19 @@ def calculate_tuner_count(minimum=1, unlimited_default=10):
             )
 
         # 3. Add custom stream count to tuner count
-        custom_stream_count = Stream.objects.filter(is_custom=True).count()
-        logger.debug(f"Found {custom_stream_count} custom streams")
+        custom_stream_count = 0
+        if count_custom_streams:
+            custom_streams = Stream.objects.filter(is_custom=True)
+            if dedupe_custom_urls:
+                with_url = custom_streams.exclude(url__isnull=True).exclude(url="")
+                without_url_count = custom_streams.count() - with_url.count()
+                distinct_url_count = (
+                    with_url.order_by().values("url").distinct().count()
+                )
+                custom_stream_count = distinct_url_count + without_url_count
+            else:
+                custom_stream_count = custom_streams.count()
+        logger.debug(f"Counting {custom_stream_count} custom streams toward tuners")
 
         # 4. Calculate final tuner count
         if has_unlimited:
@@ -193,18 +220,18 @@ def calculate_tuner_count(minimum=1, unlimited_default=10):
             # Otherwise use the limited profile sum plus custom streams
             tuner_count = limited_tuners + custom_stream_count
 
-        # 5. Ensure minimum number
-        tuner_count = max(minimum, tuner_count)
+        # 5. Ensure minimum number, then apply the optional upper bound
+        tuner_count = _apply_cap(max(minimum, tuner_count))
 
         logger.debug(
-            f"Calculated tuner count: {tuner_count} (limited profiles: {limited_tuners}, custom streams: {custom_stream_count}, unlimited: {has_unlimited})"
+            f"Calculated tuner count: {tuner_count} (limited profiles: {limited_tuners}, custom streams: {custom_stream_count}, unlimited: {has_unlimited}, maximum: {cap})"
         )
 
         return tuner_count
 
     except Exception as e:
         logger.error(f"Error calculating tuner count: {e}")
-        return minimum  # Fallback to minimum value
+        return _apply_cap(minimum)  # Fallback to minimum value
 
 
 ALLOWED_M3U_PROFILE_IDS_KEY = "allowed_m3u_profile_ids"

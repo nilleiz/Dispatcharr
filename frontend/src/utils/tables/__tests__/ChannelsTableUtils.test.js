@@ -401,6 +401,23 @@ describe('ChannelsTableUtils', () => {
         ChannelsTableUtils.buildHDHRUrl('1', 'http://localhost/hdhr/')
       ).toBe('http://localhost/hdhr/output_profile/1');
     });
+
+    it('appends the tuner limit as the last segment', () => {
+      expect(
+        ChannelsTableUtils.buildHDHRUrl('3', 'http://localhost/hdhr', '20')
+      ).toBe('http://localhost/hdhr/output_profile/3/tuners/20');
+      expect(
+        ChannelsTableUtils.buildHDHRUrl('', 'http://localhost/hdhr/', 4)
+      ).toBe('http://localhost/hdhr/tuners/4');
+    });
+
+    it('ignores empty or invalid tuner limits', () => {
+      for (const limit of ['', null, undefined, '0', '-2', 'abc']) {
+        expect(
+          ChannelsTableUtils.buildHDHRUrl('', 'http://localhost/hdhr', limit)
+        ).toBe('http://localhost/hdhr');
+      }
+    });
   });
 
   // ── buildFetchParams ────────────────────────────────────────────────────────
