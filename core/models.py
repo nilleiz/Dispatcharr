@@ -2,6 +2,9 @@
 
 import logging
 import os
+import re
+import secrets
+import string
 import time
 from collections import namedtuple
 from shlex import split as shlex_split
@@ -9,7 +12,7 @@ from shlex import split as shlex_split
 from django.conf import settings
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.utils.text import slugify
 from django_redis.exceptions import ConnectionInterrupted
 from redis.exceptions import AuthenticationError as RedisAuthenticationError
@@ -290,6 +293,12 @@ EpgHistoryPolicy = namedtuple(
 )
 USER_LIMITS_SETTINGS_KEY = "user_limit_settings"
 REVERSE_PROXY_AUTH_KEY = "reverse_proxy_auth"
+# Per-instance random part of the HDHR DeviceID. Kept in its own group so a
+# stale frontend copy of stream_settings can never overwrite it.
+HDHR_IDENTITY_KEY = "hdhr_identity"
+HDHR_INSTANCE_ID_LENGTH = 8
+_HDHR_INSTANCE_ID_ALPHABET = string.ascii_lowercase + string.digits
+_HDHR_INSTANCE_ID_RE = re.compile(r"^[a-z0-9]{%d}$" % HDHR_INSTANCE_ID_LENGTH)
 
 # Redis cache for CoreSettings JSON groups. Primary invalidation is post_save /
 # post_delete; TTL is a safety net if a writer bypasses signals.
@@ -536,6 +545,9 @@ class CoreSettings(models.Model):
             "m3u_hash_key": "",
             "default_output_format": "mpegts",
             "hdhr_output_profile_id": None,
+            "hdhr_max_tuner_count": None,
+            "hdhr_count_custom_streams": True,
+            "hdhr_dedupe_custom_stream_urls": False,
         })
 
     @classmethod
@@ -903,6 +915,76 @@ class CoreSettings(models.Model):
             return int(raw) if raw is not None else None
         except (ValueError, TypeError):
             return None
+
+    @classmethod
+    def get_hdhr_max_tuner_count(cls):
+        """Upper bound for the tuner count reported to HDHR clients.
+
+        Returns a positive int, or None when unset/invalid (automatic count).
+        Only applies to the HDHR emulator, not to the Xtream Codes API.
+        """
+        raw = cls.get_stream_settings().get("hdhr_max_tuner_count")
+        if raw is None or raw == "" or isinstance(raw, bool):
+            return None
+        try:
+            value = int(raw)
+        except (ValueError, TypeError):
+            return None
+        return value if value > 0 else None
+
+    @classmethod
+    def get_hdhr_count_custom_streams(cls):
+        """Whether custom streams add to the automatic HDHR tuner count."""
+        return cls.get_stream_settings().get("hdhr_count_custom_streams") is not False
+
+    @classmethod
+    def get_hdhr_dedupe_custom_stream_urls(cls):
+        """Whether custom streams sharing a URL count once for HDHR tuners."""
+        return cls.get_stream_settings().get("hdhr_dedupe_custom_stream_urls") is True
+
+    @staticmethod
+    def _new_hdhr_instance_id():
+        return "".join(
+            secrets.choice(_HDHR_INSTANCE_ID_ALPHABET)
+            for _ in range(HDHR_INSTANCE_ID_LENGTH)
+        )
+
+    @staticmethod
+    def _valid_hdhr_instance_id(value):
+        return isinstance(value, str) and bool(_HDHR_INSTANCE_ID_RE.match(value))
+
+    @classmethod
+    def get_hdhr_instance_id(cls):
+        """Random per-instance part of the HDHR DeviceID.
+
+        Generated once on first use and persisted, so the DeviceID stays
+        stable across restarts and upgrades but differs between instances
+        (two Dispatcharr servers in one Plex must not share a DeviceID).
+        """
+        value = cls._get_group(HDHR_IDENTITY_KEY, {}).get("instance_id")
+        if cls._valid_hdhr_instance_id(value):
+            return value
+
+        with transaction.atomic():
+            obj, _ = cls.objects.select_for_update().get_or_create(
+                key=HDHR_IDENTITY_KEY,
+                defaults={"name": "HDHR Identity", "value": {}},
+            )
+            current = obj.value if isinstance(obj.value, dict) else {}
+            value = current.get("instance_id")
+            if not cls._valid_hdhr_instance_id(value):
+                value = cls._new_hdhr_instance_id()
+                current["instance_id"] = value
+                obj.value = current
+                obj.save()
+        return value
+
+    @classmethod
+    def regenerate_hdhr_instance_id(cls):
+        """Replace the HDHR instance ID (HDHR clients will see a new device)."""
+        value = cls._new_hdhr_instance_id()
+        cls._update_group(HDHR_IDENTITY_KEY, "HDHR Identity", {"instance_id": value})
+        return value
 
     @classmethod
     def get_dvr_output_profile_id(cls):

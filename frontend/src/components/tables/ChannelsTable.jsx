@@ -367,6 +367,9 @@ const ChannelsTable = ({ onReady }) => {
 
   // store/settings
   const env_mode = useSettingsStore((s) => s.environment.env_mode);
+  const hdhrMaxTunerCount = useSettingsStore(
+    (s) => s.settings?.stream_settings?.value?.hdhr_max_tuner_count
+  );
   const outputProfiles = useOutputProfilesStore((s) => s.profiles);
   const showVideo = useVideoStore((s) => s.showVideo);
 
@@ -452,6 +455,7 @@ const ChannelsTable = ({ onReady }) => {
 
   const [hdhrUrl, setHDHRUrl] = useState(hdhrUrlBase);
   const [hdhrOutputProfileId, setHdhrOutputProfileId] = useState('');
+  const [hdhrTunerLimit, setHdhrTunerLimit] = useState('');
   const [epgUrl, setEPGUrl] = useState(epgUrlBase);
   const [m3uUrl, setM3UUrl] = useState(m3uUrlBase);
 
@@ -858,10 +862,13 @@ const ChannelsTable = ({ onReady }) => {
   };
 
   const copyHDHRUrl = async () => {
-    await copyToClipboard(buildHDHRUrl(hdhrOutputProfileId, hdhrUrl), {
-      successTitle: 'HDHR URL Copied!',
-      successMessage: 'The HDHR URL has been copied to your clipboard.',
-    });
+    await copyToClipboard(
+      buildHDHRUrl(hdhrOutputProfileId, hdhrUrl, hdhrTunerLimit),
+      {
+        successTitle: 'HDHR URL Copied!',
+        successMessage: 'The HDHR URL has been copied to your clipboard.',
+      }
+    );
   };
 
   const onSortingChange = (column) => {
@@ -1412,7 +1419,11 @@ const ChannelsTable = ({ onReady }) => {
                       clients.
                     </Text>
                     <TextInput
-                      value={buildHDHRUrl(hdhrOutputProfileId, hdhrUrl)}
+                      value={buildHDHRUrl(
+                        hdhrOutputProfileId,
+                        hdhrUrl,
+                        hdhrTunerLimit
+                      )}
                       size="sm"
                       readOnly
                       label="Generated URL"
@@ -1440,6 +1451,26 @@ const ChannelsTable = ({ onReady }) => {
                       data={outputProfiles
                         .filter((p) => p.is_active)
                         .map((p) => ({ value: `${p.id}`, label: p.name }))}
+                    />
+                    <NumberInput
+                      label="Tuner Count"
+                      description={
+                        hdhrMaxTunerCount > 0
+                          ? `Tuner count reported to this client. At most ${hdhrMaxTunerCount} (HDHR Max Tuner Count).`
+                          : 'Tuner count reported to this client. At most the automatic tuner count.'
+                      }
+                      placeholder="System default"
+                      min={1}
+                      max={
+                        hdhrMaxTunerCount > 0 ? hdhrMaxTunerCount : undefined
+                      }
+                      step={1}
+                      allowDecimal={false}
+                      allowNegative={false}
+                      value={hdhrTunerLimit}
+                      onChange={(value) =>
+                        setHdhrTunerLimit(value === '' ? '' : `${value}`)
+                      }
                     />
                   </Stack>
                 </PopoverDropdown>
