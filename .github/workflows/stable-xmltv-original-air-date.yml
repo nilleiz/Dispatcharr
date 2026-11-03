@@ -52,7 +52,7 @@ jobs:
           FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
           FEATURE_REPOSITORY: nilleiz/Dispatcharr
           FEATURE_REF: feature/epg-air-date-compatibility-v033-single-commit
-          HDHR_FEATURE_REF: feature/hdhr-plex-tuner-compat-v2
+          HDHR_FEATURE_REF: feature/hdhr-plex-tuner-compat-v3
         shell: bash
         run: |
           set -euo pipefail
@@ -121,7 +121,7 @@ jobs:
           FEATURE_SHA: ${{ steps.release.outputs.feature_sha }}
           FEATURE_REF: feature/epg-air-date-compatibility-v033-single-commit
           HDHR_FEATURE_SHA: ${{ steps.release.outputs.hdhr_feature_sha }}
-          HDHR_FEATURE_REF: feature/hdhr-plex-tuner-compat-v2
+          HDHR_FEATURE_REF: feature/hdhr-plex-tuner-compat-v3
           UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
         shell: bash
         run: |

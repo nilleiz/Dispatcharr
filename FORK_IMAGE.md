@@ -6,7 +6,7 @@ Upstream-Release** von Dispatcharr plus zwei eigenständigen Feature-Commits:
 | Feature | Branch (genau ein Commit auf dem Release-Tag) |
 | --- | --- |
 | XMLTV original air date | `feature/epg-air-date-compatibility-v033-single-commit` |
-| HDHR/Plex-Tunerkompatibilität | `feature/hdhr-plex-tuner-compat-v2` |
+| HDHR/Plex-Tunerkompatibilität | `feature/hdhr-plex-tuner-compat-v3` |
 
 Basis-Image: fest auf `ghcr.io/dispatcharr/dispatcharr:${BASE_TAG}` (aktuell
 `base-20261023144948`, die Basis des offiziellen 0.33.0). Der gleitende Tag
@@ -42,7 +42,7 @@ Lokal nachbauen:
 git clone --branch <release-tag> https://github.com/Dispatcharr/Dispatcharr.git src
 cd src
 git fetch https://github.com/nilleiz/Dispatcharr.git \
-  feature/epg-air-date-compatibility-v033-single-commit feature/hdhr-plex-tuner-compat-v2
+  feature/epg-air-date-compatibility-v033-single-commit feature/hdhr-plex-tuner-compat-v3
 git cherry-pick <xmltv-sha> <hdhr-sha>
 docker build -f docker/Dockerfile \
   --build-arg REPO_OWNER=dispatcharr --build-arg REPO_NAME=dispatcharr \
@@ -61,7 +61,7 @@ Unter **Settings → Stream Settings** (gespeichert in der Settings-Gruppe
 
 | Einstellung | Schlüssel | Default | Wirkung |
 | --- | --- | --- | --- |
-| HDHR Max Tuner Count | `hdhr_max_tuner_count` | leer (automatisch) | Obergrenze für die gemeldete Tunerzahl. |
+| HDHR Max Tuner Count | `hdhr_max_tuner_count` | leer (automatisch) | Obergrenze für die gemeldete Tunerzahl – gilt für jede HDHR-URL, auch mit eigenem Tuner Count. |
 | Count custom streams toward HDHR tuners | `hdhr_count_custom_streams` | an (bisheriges Verhalten) | Aus: Custom-Streams (z. B. Fallback-/Slate-Streams) erhöhen die automatische Tunerzahl nicht. |
 | Count identical custom stream URLs once | `hdhr_dedupe_custom_stream_urls` | aus | An: Custom-Streams mit gleicher URL zählen nur einmal. |
 
@@ -71,12 +71,13 @@ höchstens `hdhr_max_tuner_count`.
 
 ### Tunerzahl pro URL
 
-Im HDHR-Popover (Channels → Links → HDHR) gibt es **Max Tuners**. Ein Wert hängt
+Im HDHR-Popover (Channels → Links → HDHR) gibt es **Tuner Count**. Ein Wert hängt
 `/tuners/<n>` an die generierte URL, z. B.
-`http://<host>:<port>/hdhr/output_profile/3/tuners/20`. Für Clients mit dieser
-URL ersetzt er „HDHR Max Tuner Count“ (gedeckelt durch die automatische Zahl).
-So bekommen verschiedene Clients verschiedene Tunerzahlen. Die DeviceID
-ändert sich dadurch nicht.
+`http://<host>:<port>/hdhr/output_profile/3/tuners/8`. Clients mit dieser URL
+bekommen genau diese Tunerzahl gemeldet, aber nie mehr als „HDHR Max Tuner
+Count“ (ohne globales Max: nie mehr als die automatische Zahl). So bekommen
+verschiedene Clients verschiedene Tunerzahlen. Die DeviceID ändert sich dadurch
+nicht.
 
 ### DeviceID – Achtung, Identitätswechsel für Plex
 
