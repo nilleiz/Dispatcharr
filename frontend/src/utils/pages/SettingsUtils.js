@@ -31,6 +31,10 @@ const GROUP_CONFIG = {
       m3u_hash_key: { type: 'm3u_hash_key', default: [] },
       default_output_format: { type: 'string', default: 'mpegts' },
       hdhr_output_profile_id: { type: 'id' },
+      // HDHR-only tuner settings (Xtream Codes is not affected).
+      hdhr_max_tuner_count: { type: 'optional_int' },
+      hdhr_count_custom_streams: { type: 'bool', default: true },
+      hdhr_dedupe_custom_stream_urls: { type: 'bool', default: false },
     },
   },
   epg_settings: {
@@ -100,6 +104,15 @@ const toIntOr = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+// Positive integer, or null when empty/invalid (null means "automatic").
+const toOptionalPositiveInt = (value) => {
+  if (value == null || value === '') {
+    return null;
+  }
+  const parsed = typeof value === 'number' ? value : parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : null;
+};
+
 const toBool = (value, fallback = false) =>
   typeof value === 'boolean' ? value : value == null ? fallback : Boolean(value);
 
@@ -123,6 +136,8 @@ const parseFieldValue = (def, rawValue) => {
       return toOptionalIdString(rawValue);
     case 'int':
       return toIntOr(rawValue, def.default ?? 0);
+    case 'optional_int':
+      return toOptionalPositiveInt(rawValue);
     case 'bool':
       return toBool(rawValue, def.default ?? false);
     case 'array':
@@ -181,6 +196,10 @@ const normalizeForCompare = (groupKey, field, value) => {
     }
     return String(value);
   }
+  if (type === 'optional_int') {
+    const parsed = toOptionalPositiveInt(value);
+    return parsed == null ? '' : String(parsed);
+  }
   if (value == null) {
     return '';
   }
@@ -199,6 +218,10 @@ const coerceFieldValue = (groupKey, field, value) => {
       return null;
     }
     return parseInt(value, 10) || null;
+  }
+
+  if (type === 'optional_int') {
+    return toOptionalPositiveInt(value);
   }
 
   if (type === 'int' && value != null) {

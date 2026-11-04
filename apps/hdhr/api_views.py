@@ -19,6 +19,33 @@ from core.utils import build_absolute_uri_with_port
 logger = logging.getLogger(__name__)
 
 
+def _get_hdhr_tuner_count(tuner_count=None):
+    """Tuner count reported to HDHR clients (discover.json).
+
+    Without a URL tuner count this is the shared calculate_tuner_count() with
+    the HDHR-only settings from Stream Settings (custom stream counting, URL
+    de-duplication) capped by HDHR Max Tuner Count. A positive ``tuner_count``
+    from the URL (``/tuners/<n>/``) is reported as is, but never above HDHR
+    Max Tuner Count, or above the automatic count when no maximum is set.
+    The Xtream Codes API is not affected.
+    """
+    from core.models import CoreSettings
+    from apps.m3u.utils import calculate_tuner_count
+
+    global_max = CoreSettings.get_hdhr_max_tuner_count()
+    if tuner_count and global_max:
+        return min(tuner_count, global_max)
+
+    automatic = calculate_tuner_count(
+        minimum=1,
+        unlimited_default=10,
+        count_custom_streams=CoreSettings.get_hdhr_count_custom_streams(),
+        dedupe_custom_urls=CoreSettings.get_hdhr_dedupe_custom_stream_urls(),
+        maximum=global_max,
+    )
+    return min(tuner_count, automatic) if tuner_count else automatic
+
+
 def _hdhr_network_check(request):
     """Return a 403 JsonResponse if the client IP is not allowed by the
     M3U_EPG network access policy. HDHR discovery endpoints expose channel
@@ -48,7 +75,7 @@ class DiscoverAPIView(APIView):
     @extend_schema(
         description="Retrieve HDHomeRun device discovery information",
     )
-    def get(self, request, channel_profile=None, output_profile_id=None):
+    def get(self, request, channel_profile=None, output_profile_id=None, tuner_limit=None):
         blocked = _hdhr_network_check(request)
         if blocked is not None:
             return blocked
@@ -59,12 +86,14 @@ class DiscoverAPIView(APIView):
         if output_profile_id is not None:
             uri_parts.append("output_profile")
             uri_parts.append(str(output_profile_id))
+        if tuner_limit:
+            uri_parts.append("tuners")
+            uri_parts.append(str(tuner_limit))
 
         base_url = build_absolute_uri_with_port(request, f'/{"/".join(uri_parts)}/').rstrip("/")
         device = HDHRDevice.objects.first()
 
-        from apps.m3u.utils import calculate_tuner_count
-        tuner_count = calculate_tuner_count(minimum=1, unlimited_default=10)
+        tuner_count = _get_hdhr_tuner_count(tuner_limit)
 
         slug_parts = [p for p in [channel_profile, str(output_profile_id) if output_profile_id is not None else None] if p]
         device_ID = f"dispatcharr-hdhr-{'-'.join(slug_parts)}" if slug_parts else "12345678"
@@ -123,7 +152,7 @@ class LineupAPIView(APIView):
     @extend_schema(
         description="Retrieve the available channel lineup",
     )
-    def get(self, request, channel_profile=None, output_profile_id=None):
+    def get(self, request, channel_profile=None, output_profile_id=None, tuner_limit=None):
         blocked = _hdhr_network_check(request)
         if blocked is not None:
             return blocked
@@ -187,7 +216,7 @@ class LineupStatusAPIView(APIView):
     @extend_schema(
         description="Retrieve the HDHomeRun lineup status",
     )
-    def get(self, request, channel_profile=None, output_profile_id=None):
+    def get(self, request, channel_profile=None, output_profile_id=None, tuner_limit=None):
         blocked = _hdhr_network_check(request)
         if blocked is not None:
             return blocked

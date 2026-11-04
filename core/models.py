@@ -536,6 +536,9 @@ class CoreSettings(models.Model):
             "m3u_hash_key": "",
             "default_output_format": "mpegts",
             "hdhr_output_profile_id": None,
+            "hdhr_max_tuner_count": None,
+            "hdhr_count_custom_streams": True,
+            "hdhr_dedupe_custom_stream_urls": False,
         })
 
     @classmethod
@@ -903,6 +906,32 @@ class CoreSettings(models.Model):
             return int(raw) if raw is not None else None
         except (ValueError, TypeError):
             return None
+
+    @classmethod
+    def get_hdhr_max_tuner_count(cls):
+        """Upper bound for the tuner count reported to HDHR clients.
+
+        Returns a positive int, or None when unset/invalid (automatic count).
+        Only applies to the HDHR emulator, not to the Xtream Codes API.
+        """
+        raw = cls.get_stream_settings().get("hdhr_max_tuner_count")
+        if raw is None or raw == "" or isinstance(raw, bool):
+            return None
+        try:
+            value = int(raw)
+        except (ValueError, TypeError):
+            return None
+        return value if value > 0 else None
+
+    @classmethod
+    def get_hdhr_count_custom_streams(cls):
+        """Whether custom streams add to the automatic HDHR tuner count."""
+        return cls.get_stream_settings().get("hdhr_count_custom_streams") is not False
+
+    @classmethod
+    def get_hdhr_dedupe_custom_stream_urls(cls):
+        """Whether custom streams sharing a URL count once for HDHR tuners."""
+        return cls.get_stream_settings().get("hdhr_dedupe_custom_stream_urls") is True
 
     @classmethod
     def get_dvr_output_profile_id(cls):
