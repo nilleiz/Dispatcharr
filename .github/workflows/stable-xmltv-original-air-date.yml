@@ -51,7 +51,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
           FEATURE_REPOSITORY: nilleiz/Dispatcharr
-          FEATURE_REF: feature/epg-air-date-compatibility-v033-single-commit
+          FEATURE_REF: feature/epg-air-date-compatibility-v034-single-commit
           HDHR_FEATURE_REF: feature/hdhr-plex-tuner-compat-v3
         shell: bash
         run: |
@@ -119,7 +119,7 @@ jobs:
         id: integration
         env:
           FEATURE_SHA: ${{ steps.release.outputs.feature_sha }}
-          FEATURE_REF: feature/epg-air-date-compatibility-v033-single-commit
+          FEATURE_REF: feature/epg-air-date-compatibility-v034-single-commit
           HDHR_FEATURE_SHA: ${{ steps.release.outputs.hdhr_feature_sha }}
           HDHR_FEATURE_REF: feature/hdhr-plex-tuner-compat-v3
           UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
